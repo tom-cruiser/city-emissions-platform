@@ -1,0 +1,35 @@
+[project]
+name = "city-emissions-platform"
+version = "0.1.0"
+description = "Open city GHG emissions warehouse: PostGIS + dbt + Dagster + FastAPI"
+# 3.12 only: the newest Python that dbt and Dagster are both well supported on.
+requires-python = ">=3.12,<3.13"
+
+# Direct dependencies are pinned exactly; uv.lock pins every transitive one too.
+dependencies = [
+    # Transformation
+    "dbt-core==1.12.6",
+    "dbt-postgres==1.11.0",
+    # Orchestration
+    "dagster==1.13.28",
+    "dagster-dbt==0.29.28",
+    "dagster-postgres==0.29.28",
+    "dagster-webserver==1.13.28",
+    # API
+    "fastapi==0.162.0",
+    "uvicorn[standard]==0.54.0",
+    "pydantic==2.14.3",
+    "pydantic-settings==2.16.2",
+    # Database access
+    "psycopg[binary]==3.3.8",
+    "sqlalchemy==2.1.8",
+    "geoalchemy2==0.21.0",
+    # HTTP (downloads in ingestion, TestClient in API tests)
+    "httpx==0.28.1",
+]
+
+[dependency-groups]
+dev = [
+    "pytest==9.2.0",
+    "ruff==0.17.3",
+]

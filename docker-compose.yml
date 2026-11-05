@@ -1,0 +1,31 @@
+# Stage 1: just the warehouse. Ingestion, Dagster and the API are added in later stages.
+name: city-emissions-platform
+
+services:
+  db:
+    # Pinned to Postgres 16 + PostGIS 3.5. A digest pin would be stricter still.
+    image: postgis/postgis:16-3.5
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      # Read by db/init/01-init.sh to create the least-privilege roles.
+      PIPELINE_USER: ${PIPELINE_USER}
+      PIPELINE_PASSWORD: ${PIPELINE_PASSWORD}
+      API_READER_USER: ${API_READER_USER}
+      API_READER_PASSWORD: ${API_READER_PASSWORD}
+    ports:
+      # Bound to localhost only, so the DB is not exposed on your network.
+      - "127.0.0.1:${POSTGRES_PORT:-5434}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Scripts here run ONCE, the first time the data volume is empty.
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  pgdata:

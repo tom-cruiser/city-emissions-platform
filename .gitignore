@@ -1,0 +1,26 @@
+# Secrets
+.env
+
+# Python
+venv/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# dbt build output
+dbt/target/
+dbt/dbt_packages/
+dbt/logs/
+
+# Dagster local state
+dagster/.dagster_home/
+.dagster_home/
+
+# Downloaded raw files (the small committed sample lives in data/sample/)
+data/raw/
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
