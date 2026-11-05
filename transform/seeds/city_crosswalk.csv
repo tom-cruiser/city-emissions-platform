@@ -1,0 +1,26 @@
+city_id,city_name,country_iso3,edgar_uc_id,gb_adm_level,gb_shape_id,gb_shape_name,match_note
+kigali-rwa,Kigali,RWA,597,ADM1,91480417B22690809677968,City of Kigali,City of Kigali province
+nairobi-ken,Nairobi,KEN,1717,ADM1,32016919B57908315498598,Nairobi,Nairobi County
+lagos-nga,Lagos,NGA,1289,ADM1,27671186B19119389308001,Lagos,Lagos State: there is no single city-level government for metropolitan Lagos
+bujumbura-bdi,Bujumbura,BDI,295,ADM1,87207978B47636051590360,Bujumbura Mairie,Bujumbura Mairie (the city); not the separate Bujumbura Rural province
+kampala-uga,Kampala,UGA,1711,ADM2,47994165B16286500452212,Kampala,Uganda ADM1 has only 4 regions so the city is matched at ADM2
+addis-ababa-eth,Addis Ababa,ETH,5862,ADM1,75662566B5378229891244,Addis Ababa,Chartered city at ADM1; EDGAR also has an unrelated 'Addis Kidan'
+dar-es-salaam-tza,Dar es Salaam,TZA,3570,ADM1,36957248B2633782293100,Dar es Salaam,EDGAR spells the name 'Dar es-Salaam'
+accra-gha,Accra,GHA,3175,ADM2,2480657B11720749290533,Accra Metropolis,Accra Metropolis district (ADM2)
+johannesburg-zaf,Johannesburg,ZAF,3512,ADM2,47623444B15418766532839,City of Johannesburg,Metropolitan municipality (ADM2)
+cape-town-zaf,Cape Town,ZAF,431,ADM2,47623444B95865124382580,City of Cape Town,Metropolitan municipality (ADM2)
+dakar-sen,Dakar,SEN,39,ADM1,71046170B16569890219484,Dakar,Dakar Region (Senegal ADM1 units are regions)
+kinshasa-cod,Kinshasa,COD,1876,ADM1,28894549B68389240291046,Kinshasa,City-province
+cairo-egy,Cairo,EGY,4605,ADM1,46179711B66630674459803,Cairo Governorate,Cairo Governorate
+buenos-aires-arg,Buenos Aires,ARG,4443,ADM1,19177384B49506124846693,Ciudad Autónoma de Buenos Aires,Autonomous City (CABA); not Buenos Aires Province
+mexico-city-mex,Mexico City,MEX,5402,ADM1,31927357B79016588373767,Distrito Federal,geoBoundaries uses the pre-2016 name 'Distrito Federal'; EDGAR country name is mis-encoded ('MÃ©xico')
+bogota-col,Bogotá,COL,3881,ADM1,13589884B40908771570386,Bogota Capital District,Capital District
+lima-per,Lima,PER,2171,ADM1,1875124B43998217738279,Municipalidad Metropolitana de Lima,Metropolitan Lima municipality; not the Lima region; Callao is separate
+delhi-ind,Delhi,IND,7963,ADM1,1811400B23625213884851,Delhi,EDGAR urban centre is named 'Ghaziabad [New Delhi]' and extends beyond the NCT of Delhi boundary
+jakarta-idn,Jakarta,IDN,5472,ADM1,65028918B14696209246677,Jakarta Special Capital Region,Special Capital Region (DKI Jakarta)
+bangkok-tha,Bangkok,THA,2315,ADM1,36821470B28205534186964,Bangkok,Special administrative area
+seoul-kor,Seoul,KOR,348,ADM1,68945753B55100681051852,Seoul,Special city
+tokyo-jpn,Tokyo,JPN,5929,ADM1,47310658B199342310790,Tokyo,Tokyo Metropolis prefecture; includes the remote Izu and Ogasawara islands
+berlin-deu,Berlin,DEU,5483,ADM1,10402087B20892132820961,Berlin,City-state
+paris-fra,Paris,FRA,2878,ADM2,29444166B33792924009837,Paris,Département 75 (Ville de Paris)
+sao-paulo-bra,São Paulo,BRA,7277,ADM2,56859067B92864763247255,São Paulo,Municipality (ADM2); EDGAR name is mis-encoded ('SÃ£o Paulo')

@@ -1,0 +1,245 @@
+{
+  "description": "Extract of real upstream files, restricted to the cities in transform/seeds/city_crosswalk.csv. Regenerate with: python -m ingestion make-sample EDGAR is not included: a synthetic EDGAR fixture is pending (see README).",
+  "files": [
+    {
+      "source_name": "geoboundaries",
+      "source_key": "ARG_ADM1",
+      "path": "geoboundaries/geoBoundaries-ARG-ADM1_simplified.geojson",
+      "rows": 1,
+      "source_url": "https://github.com/wmgeolab/geoBoundaries/raw/9469f09/releaseData/gbOpen/ARG/ADM1/geoBoundaries-ARG-ADM1_simplified.geojson",
+      "license": "Creative Commons Attribution 2.5 Generic",
+      "upstream_sha256": "7cc9b00ba139e57f59611993d96d07eb84d955ed5bd6bd6f1dcb864e1baf549c",
+      "upstream_downloaded_at": "2026-11-05T14:39:11.669187+00:00"
+    },
+    {
+      "source_name": "geoboundaries",
+      "source_key": "BDI_ADM1",
+      "path": "geoboundaries/geoBoundaries-BDI-ADM1_simplified.geojson",
+      "rows": 1,
+      "source_url": "https://github.com/wmgeolab/geoBoundaries/raw/9469f09/releaseData/gbOpen/BDI/ADM1/geoBoundaries-BDI-ADM1_simplified.geojson",
+      "license": "CC0 1.0 Universal (CC0 1.0) Public Domain Dedication",
+      "upstream_sha256": "2e134d7b93d0c55c490afe45c7ff0a6ca6d78e6e841264d5119420caacdbf32b",
+      "upstream_downloaded_at": "2026-11-05T14:42:26.794415+00:00"
+    },
+    {
+      "source_name": "geoboundaries",
+      "source_key": "BRA_ADM2",
+      "path": "geoboundaries/geoBoundaries-BRA-ADM2_simplified.geojson",
+      "rows": 1,
+      "source_url": "https://github.com/wmgeolab/geoBoundaries/raw/9469f09/releaseData/gbOpen/BRA/ADM2/geoBoundaries-BRA-ADM2_simplified.geojson",
+      "license": "Creative Commons Attribution 3.0 Intergovernmental Organisations (CC BY 3.0 IGO)",
+      "upstream_sha256": "96abf365ab2be5f620a1516bc555e6f7cfade6b43313c562ab1ab05d1039973f",
+      "upstream_downloaded_at": "2026-11-05T14:42:51.335564+00:00"
+    },
+    {
+      "source_name": "geoboundaries",
+      "source_key": "COD_ADM1",
+      "path": "geoboundaries/geoBoundaries-COD-ADM1_simplified.geojson",
+      "rows": 1,
+      "source_url": "https://github.com/wmgeolab/geoBoundaries/raw/9469f09/releaseData/gbOpen/COD/ADM1/geoBoundaries-COD-ADM1_simplified.geojson",
+      "license": "Open Data Commons Open Database License 1.0",
+      "upstream_sha256": "bf6096f1c16f2632be9c4d4c0305276024fd5b3f3b9b3e635b2e2018d02f0331",
+      "upstream_downloaded_at": "2026-11-05T14:43:05.604772+00:00"
+    },
+    {
+      "source_name": "geoboundaries",
+      "source_key": "COL_ADM1",
+      "path": "geoboundaries/geoBoundaries-COL-ADM1_simplified.geojson",
+      "rows": 1,
+      "source_url": "https://github.com/wmgeolab/geoBoundaries/raw/9469f09/releaseData/gbOpen/COL/ADM1/geoBoundaries-COL-ADM1_simplified.geojson",
+      "license": "Open Data Commons Open Database License 1.0",
+      "upstream_sha256": "038b7692a8e3bdc52b072b8de305d0dd8e88fe3e869c8c4889ff18cddd7f5a81",
+      "upstream_downloaded_at": "2026-11-05T14:43:18.087044+00:00"
+    },
+    {
+      "source_name": "geoboundaries",
+      "source_key": "DEU_ADM1",
+      "path": "geoboundaries/geoBoundaries-DEU-ADM1_simplified.geojson",
+      "rows": 1,
+      "source_url": "https://github.com/wmgeolab/geoBoundaries/raw/9469f09/releaseData/gbOpen/DEU/ADM1/geoBoundaries-DEU-ADM1_simplified.geojson",
+      "license": "Data license Germany - Attribution - Version 2.0",
+      "upstream_sha256": "511b3625ad4568d12a6bfcb1bdea4e877199e1923e502cb80224b8164128eb05",
+      "upstream_downloaded_at": "2026-11-05T14:43:31.867761+00:00"
+    },
+    {
+      "source_name": "geoboundaries",
+      "source_key": "EGY_ADM1",
+      "path": "geoboundaries/geoBoundaries-EGY-ADM1_simplified.geojson",
+      "rows": 1,
+      "source_url": "https://github.com/wmgeolab/geoBoundaries/raw/9469f09/releaseData/gbOpen/EGY/ADM1/geoBoundaries-EGY-ADM1_simplified.geojson",
+      "license": "Open Data Commons Open Database License 1.0",
+      "upstream_sha256": "6f521038eaf80b2925677b05f1fcb65f5f976bfd61ebbe0aef369c85895336a2",
+      "upstream_downloaded_at": "2026-11-05T14:43:43.822940+00:00"
+    },
+    {
+      "source_name": "geoboundaries",
+      "source_key": "ETH_ADM1",
+      "path": "geoboundaries/geoBoundaries-ETH-ADM1_simplified.geojson",
+      "rows": 1,
+      "source_url": "https://github.com/wmgeolab/geoBoundaries/raw/9469f09/releaseData/gbOpen/ETH/ADM1/geoBoundaries-ETH-ADM1_simplified.geojson",
+      "license": "Creative Commons Attribution 4.0 (CC BY 4.0)",
+      "upstream_sha256": "43adf22c2dfbb8b7b6f61b340588718cc1037c9e5810f2e1995babd12ff81094",
+      "upstream_downloaded_at": "2026-11-05T14:43:54.116509+00:00"
+    },
+    {
+      "source_name": "geoboundaries",
+      "source_key": "FRA_ADM2",
+      "path": "geoboundaries/geoBoundaries-FRA-ADM2_simplified.geojson",
+      "rows": 1,
+      "source_url": "https://github.com/wmgeolab/geoBoundaries/raw/9469f09/releaseData/gbOpen/FRA/ADM2/geoBoundaries-FRA-ADM2_simplified.geojson",
+      "license": "Etalab Open License 2.0",
+      "upstream_sha256": "a14ed131c86c802e5d546c7cbeccbd4daebc94a66fea413f563935a53504f251",
+      "upstream_downloaded_at": "2026-11-05T14:44:06.179391+00:00"
+    },
+    {
+      "source_name": "geoboundaries",
+      "source_key": "GHA_ADM2",
+      "path": "geoboundaries/geoBoundaries-GHA-ADM2_simplified.geojson",
+      "rows": 1,
+      "source_url": "https://github.com/wmgeolab/geoBoundaries/raw/9469f09/releaseData/gbOpen/GHA/ADM2/geoBoundaries-GHA-ADM2_simplified.geojson",
+      "license": "Creative Commons Attribution 4.0 International (CC BY 4.0)",
+      "upstream_sha256": "ae10ae6edbf0a04e5cbedde2d6cb9c30e7867969c530264772d1e76990142f02",
+      "upstream_downloaded_at": "2026-11-05T14:44:31.313163+00:00"
+    },
+    {
+      "source_name": "geoboundaries",
+      "source_key": "IDN_ADM1",
+      "path": "geoboundaries/geoBoundaries-IDN-ADM1_simplified.geojson",
+      "rows": 1,
+      "source_url": "https://github.com/wmgeolab/geoBoundaries/raw/9469f09/releaseData/gbOpen/IDN/ADM1/geoBoundaries-IDN-ADM1_simplified.geojson",
+      "license": "Open Data Commons Open Database License 1.0",
+      "upstream_sha256": "5a6be3d1484166132751fe535dd164e1491e657f2d38dced177f067a7bc00d8f",
+      "upstream_downloaded_at": "2026-11-05T14:44:46.823080+00:00"
+    },
+    {
+      "source_name": "geoboundaries",
+      "source_key": "IND_ADM1",
+      "path": "geoboundaries/geoBoundaries-IND-ADM1_simplified.geojson",
+      "rows": 1,
+      "source_url": "https://github.com/wmgeolab/geoBoundaries/raw/9469f09/releaseData/gbOpen/IND/ADM1/geoBoundaries-IND-ADM1_simplified.geojson",
+      "license": "Creative Commons Attribution 2.5 India (CC BY 2.5 IN)",
+      "upstream_sha256": "4c63fe43294a391e8f2de4e9f86f3edb60f8688275b9fee90c61fb2aa0c26061",
+      "upstream_downloaded_at": "2026-11-05T14:44:58.552674+00:00"
+    },
+    {
+      "source_name": "geoboundaries",
+      "source_key": "JPN_ADM1",
+      "path": "geoboundaries/geoBoundaries-JPN-ADM1_simplified.geojson",
+      "rows": 1,
+      "source_url": "https://github.com/wmgeolab/geoBoundaries/raw/9469f09/releaseData/gbOpen/JPN/ADM1/geoBoundaries-JPN-ADM1_simplified.geojson",
+      "license": "Open Data Commons Open Database License 1.0",
+      "upstream_sha256": "f18eeeb978d992a7147f636642932913731c231f298cb514bf7a3bd41a1aacc0",
+      "upstream_downloaded_at": "2026-11-05T14:45:09.525328+00:00"
+    },
+    {
+      "source_name": "geoboundaries",
+      "source_key": "KEN_ADM1",
+      "path": "geoboundaries/geoBoundaries-KEN-ADM1_simplified.geojson",
+      "rows": 1,
+      "source_url": "https://github.com/wmgeolab/geoBoundaries/raw/9469f09/releaseData/gbOpen/KEN/ADM1/geoBoundaries-KEN-ADM1_simplified.geojson",
+      "license": "Public Domain",
+      "upstream_sha256": "4d9e1b8a6d305ee2b2bbeeeb4dd6ec3cc52e44884f0f6065d14d255810f9eae4",
+      "upstream_downloaded_at": "2026-11-05T14:45:21.463504+00:00"
+    },
+    {
+      "source_name": "geoboundaries",
+      "source_key": "KOR_ADM1",
+      "path": "geoboundaries/geoBoundaries-KOR-ADM1_simplified.geojson",
+      "rows": 1,
+      "source_url": "https://github.com/wmgeolab/geoBoundaries/raw/9469f09/releaseData/gbOpen/KOR/ADM1/geoBoundaries-KOR-ADM1_simplified.geojson",
+      "license": "Public Domain",
+      "upstream_sha256": "7d774c8bb1ee65dde693431985423616fd059ffbe1c1bb497b5fed4f47bcac01",
+      "upstream_downloaded_at": "2026-11-05T14:45:31.902332+00:00"
+    },
+    {
+      "source_name": "geoboundaries",
+      "source_key": "MEX_ADM1",
+      "path": "geoboundaries/geoBoundaries-MEX-ADM1_simplified.geojson",
+      "rows": 1,
+      "source_url": "https://github.com/wmgeolab/geoBoundaries/raw/90a1d52/releaseData/gbOpen/MEX/ADM1/geoBoundaries-MEX-ADM1_simplified.geojson",
+      "license": "Creative Commons Attribution 3.0 Intergovernmental Organisations (CC BY 3.0 IGO)",
+      "upstream_sha256": "c535c8f8ffeacd1905178c27577f25c83cb4a155b5d7e6dbe910a76e7d2d9896",
+      "upstream_downloaded_at": "2026-11-05T14:45:42.784423+00:00"
+    },
+    {
+      "source_name": "geoboundaries",
+      "source_key": "NGA_ADM1",
+      "path": "geoboundaries/geoBoundaries-NGA-ADM1_simplified.geojson",
+      "rows": 1,
+      "source_url": "https://github.com/wmgeolab/geoBoundaries/raw/9469f09/releaseData/gbOpen/NGA/ADM1/geoBoundaries-NGA-ADM1_simplified.geojson",
+      "license": "Creative Commons Attribution 4.0 International (CC BY 4.0)",
+      "upstream_sha256": "edd28050c7f1ae40471424605f74e4d2df83502e4f301089761ae18f8ae2fbbf",
+      "upstream_downloaded_at": "2026-11-05T14:45:54.900509+00:00"
+    },
+    {
+      "source_name": "geoboundaries",
+      "source_key": "PER_ADM1",
+      "path": "geoboundaries/geoBoundaries-PER-ADM1_simplified.geojson",
+      "rows": 1,
+      "source_url": "https://github.com/wmgeolab/geoBoundaries/raw/90a1d52/releaseData/gbOpen/PER/ADM1/geoBoundaries-PER-ADM1_simplified.geojson",
+      "license": "Public Domain",
+      "upstream_sha256": "df5bbc9e4eabae9dcf9fe163180be85c1ef297bb1633e250b6f0c5bab5deebdf",
+      "upstream_downloaded_at": "2026-11-05T14:46:05.094597+00:00"
+    },
+    {
+      "source_name": "geoboundaries",
+      "source_key": "RWA_ADM1",
+      "path": "geoboundaries/geoBoundaries-RWA-ADM1_simplified.geojson",
+      "rows": 1,
+      "source_url": "https://github.com/wmgeolab/geoBoundaries/raw/9469f09/releaseData/gbOpen/RWA/ADM1/geoBoundaries-RWA-ADM1_simplified.geojson",
+      "license": "Creative Commons Attribution 4.0 (CC BY 4.0)",
+      "upstream_sha256": "426c73767ed4bed8b2d92890eaeb2ce8906d5f07e9367dba3330077abcdcc383",
+      "upstream_downloaded_at": "2026-11-05T14:46:14.352432+00:00"
+    },
+    {
+      "source_name": "geoboundaries",
+      "source_key": "SEN_ADM1",
+      "path": "geoboundaries/geoBoundaries-SEN-ADM1_simplified.geojson",
+      "rows": 1,
+      "source_url": "https://github.com/wmgeolab/geoBoundaries/raw/9469f09/releaseData/gbOpen/SEN/ADM1/geoBoundaries-SEN-ADM1_simplified.geojson",
+      "license": "Creative Commons Attribution 3.0 Intergovernmental Organisations (CC BY 3.0 IGO)",
+      "upstream_sha256": "ea2855a2882503b7ed479b3341168002a47035107e423366cb086f401950a57d",
+      "upstream_downloaded_at": "2026-11-05T14:46:24.869165+00:00"
+    },
+    {
+      "source_name": "geoboundaries",
+      "source_key": "THA_ADM1",
+      "path": "geoboundaries/geoBoundaries-THA-ADM1_simplified.geojson",
+      "rows": 1,
+      "source_url": "https://github.com/wmgeolab/geoBoundaries/raw/9469f09/releaseData/gbOpen/THA/ADM1/geoBoundaries-THA-ADM1_simplified.geojson",
+      "license": "Open Data Commons Open Database License 1.0",
+      "upstream_sha256": "841f1250cac868fa966b2089863f01e9c9b4dc9b7fb0d9d6dce9a495e32b32a0",
+      "upstream_downloaded_at": "2026-11-05T14:46:34.744726+00:00"
+    },
+    {
+      "source_name": "geoboundaries",
+      "source_key": "TZA_ADM1",
+      "path": "geoboundaries/geoBoundaries-TZA-ADM1_simplified.geojson",
+      "rows": 1,
+      "source_url": "https://github.com/wmgeolab/geoBoundaries/raw/9469f09/releaseData/gbOpen/TZA/ADM1/geoBoundaries-TZA-ADM1_simplified.geojson",
+      "license": "Open Data Commons Open Database License 1.0",
+      "upstream_sha256": "8b84f3f0a9e6e16322b777a5bba90c8e33c5e93c0dcb03ef1d3f6332036d066f",
+      "upstream_downloaded_at": "2026-11-05T14:46:45.050956+00:00"
+    },
+    {
+      "source_name": "geoboundaries",
+      "source_key": "UGA_ADM2",
+      "path": "geoboundaries/geoBoundaries-UGA-ADM2_simplified.geojson",
+      "rows": 1,
+      "source_url": "https://github.com/wmgeolab/geoBoundaries/raw/9469f09/releaseData/gbOpen/UGA/ADM2/geoBoundaries-UGA-ADM2_simplified.geojson",
+      "license": "Public Domain",
+      "upstream_sha256": "0a13e10b3bc6beeb02db4502c7f29a2ebbbb681a932307ccba4cd53e994feac7",
+      "upstream_downloaded_at": "2026-11-05T14:46:54.146508+00:00"
+    },
+    {
+      "source_name": "geoboundaries",
+      "source_key": "ZAF_ADM2",
+      "path": "geoboundaries/geoBoundaries-ZAF-ADM2_simplified.geojson",
+      "rows": 2,
+      "source_url": "https://github.com/wmgeolab/geoBoundaries/raw/9469f09/releaseData/gbOpen/ZAF/ADM2/geoBoundaries-ZAF-ADM2_simplified.geojson",
+      "license": "Creative Commons Attribution 3.0 Intergovernmental Organisations (CC BY 3.0 IGO)",
+      "upstream_sha256": "bb4800b804811ce9cfa5f6bf535466e3f812751249f0e1b7375d5f5753570e7c",
+      "upstream_downloaded_at": "2026-11-05T14:47:05.857900+00:00"
+    }
+  ]
+}
