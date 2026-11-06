@@ -3,7 +3,8 @@
     python -m ingestion load --mode sample           # offline, from data/sample (default)
     python -m ingestion load --mode download         # fetch real files, then load
     python -m ingestion load --mode download --source edgar
-    python -m ingestion make-sample                  # rebuild data/sample from the latest downloads
+    python -m ingestion make-sample                  # rebuild boundary sample from latest downloads
+    python -m ingestion make-synthetic               # regenerate the SYNTHETIC EDGAR fixture
 """
 
 import argparse
@@ -12,7 +13,7 @@ import psycopg
 
 from ingestion.config import Settings
 from ingestion.pipeline import SOURCES, run_download, run_sample
-from ingestion.sample import make_sample
+from ingestion.sample import make_boundary_sample, make_synthetic_edgar
 
 
 def main() -> None:
@@ -22,14 +23,19 @@ def main() -> None:
     load.add_argument("--mode", choices=["sample", "download"], default="sample")
     load.add_argument("--source", choices=sorted(SOURCES), action="append",
                       help="limit to one source (repeatable); default: all")
-    commands.add_parser("make-sample", help="rebuild data/sample from the latest downloads")
+    commands.add_parser("make-sample", help="rebuild the boundary sample from the latest downloads")
+    commands.add_parser("make-synthetic", help="regenerate the SYNTHETIC EDGAR fixture (no database)")
     args = parser.parse_args()
+
+    if args.command == "make-synthetic":
+        entry = make_synthetic_edgar()
+        print(f"SYNTHETIC {entry['source_name']} {entry['rows']} rows -> data/sample/{entry['path']}")
+        return
 
     # autocommit: each file's load is committed by its own `conn.transaction()` block.
     with psycopg.connect(Settings().pipeline_dsn, autocommit=True) as conn:
         if args.command == "make-sample":
-            manifest = make_sample(conn)
-            for f in manifest["files"]:
+            for f in make_boundary_sample(conn):
                 print(f"{f['source_name']:14} {f['source_key']:10} {f['rows']:>4} rows -> {f['path']}")
             return
 

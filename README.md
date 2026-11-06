@@ -5,7 +5,7 @@ It ingests open emissions data and city boundaries, models them in layered
 PostgreSQL/PostGIS storage with dbt, orchestrates with Dagster, and serves curated
 data through a read-only FastAPI service.
 
-> **Status: work in progress.** Stages 1–2 are built; Stage 2 has three open items.
+> **Status: work in progress.** Stages 1–2 are built; Stage 2 has one open item.
 > See [Build status](#build-status). This README describes only what exists today and
 > marks everything planned as such.
 
@@ -22,16 +22,14 @@ data through a read-only FastAPI service.
 | 7 | GitHub Actions CI | ⏳ Planned |
 | 8 | Full docs, diagrams, ADRs | ⏳ Planned |
 
-**Open items in Stage 2**
+**Stage 2 items**
 
-1. **Synthetic EDGAR fixture.** Real EDGAR rows are deliberately *not* committed (see
-   [licences](#data-sources--licences)). A synthetic file with the same structure and
-   invented values will replace them. Until then `--mode sample` loads boundaries only,
-   and the EDGAR sample reader test is skipped.
-2. **Separate `warehouse_test` database.** Tests currently run against the dev
-   `warehouse` database inside a transaction that is always rolled back. They will move
-   to a dedicated test database whose roles cannot connect to `warehouse` at all.
-3. **GHS-UCDB urban-centre polygons.** EDGAR emissions will be attached to their own
+1. ✅ **Synthetic EDGAR fixture.** Real EDGAR rows are deliberately *not* committed (see
+   [licences](#data-sources--licences)). The offline sample uses a synthetic file with
+   EDGAR's exact structure and invented values. See [Synthetic EDGAR fixture](#synthetic-edgar-fixture).
+2. ✅ **Separate `warehouse_test` database.** Tests run only against `warehouse_test`,
+   whose roles cannot connect to `warehouse`. See [Testing](#testing).
+3. ⏳ **GHS-UCDB urban-centre polygons.** EDGAR emissions will be attached to their own
    urban-centre polygons, with a PostGIS overlap ratio against each city's administrative
    boundary and a flag on low-overlap pairs.
 
@@ -85,7 +83,7 @@ erDiagram
         bigint dataset_version_id PK
         text source_name "edgar_ucdb | geoboundaries"
         text source_key "v2024 | RWA_ADM1 ..."
-        text origin "download | sample"
+        text origin "download | sample | synthetic"
         text source_url
         text file_path "repo-relative"
         char64 file_sha256 "UNIQUE with source_name, source_key"
@@ -115,15 +113,26 @@ Requires Docker and [uv](https://docs.astral.sh/uv/) (uv installs Python 3.12 it
 
 ```bash
 cp .env.example .env                 # then change the passwords
-docker compose up -d --wait          # PostGIS on 127.0.0.1:5434
+docker compose up -d --wait          # PostGIS on 127.0.0.1:5434 (warehouse + warehouse_test)
 uv sync                              # Python 3.12 environment from uv.lock
 
-uv run python -m ingestion load --mode sample     # offline: committed sample
+uv run python -m ingestion load --mode sample     # offline: synthetic EDGAR + real boundary extract
 uv run python -m ingestion load --mode download   # real files (~25 MB + boundaries)
-uv run pytest -q
+uv run pytest -q                                  # runs against warehouse_test only
 ```
 
 Re-running a load is safe: a file whose SHA-256 is already recorded is skipped.
+
+> **Sample mode loads synthetic emissions.** Use it to try the pipeline offline. Any
+> emissions number it produces is invented. Use `--mode download` for real data.
+
+**Created your volume before `warehouse_test` existed?** The init scripts only run on an
+empty volume. Add it without losing data:
+
+```bash
+docker compose up -d --wait   # recreate the container so it sees the TEST_* variables
+docker compose exec db bash /docker-entrypoint-initdb.d/02-test-db.sh   # idempotent
+```
 
 Inspect what was loaded:
 
@@ -139,9 +148,12 @@ only run against an empty volume.
 ## Project layout
 
 ```
-db/init/01-init.sh          PostGIS, schemas, roles, grants (runs once on an empty volume)
+db/init/
+  01-init.sh                warehouse: roles pipeline + api_reader (runs once on an empty volume)
+  02-test-db.sh             warehouse_test: roles test_pipeline + test_api_reader (idempotent)
+  lib/layers.sql            shared: PostGIS, schemas, CONNECT/USAGE/SELECT grants
 ingestion/
-  __main__.py               CLI: load --mode sample|download, make-sample
+  __main__.py               CLI: load --mode sample|download, make-sample, make-synthetic
   config.py                 source URLs, paths, DB settings (.env)
   download.py               streaming download, SHA-256, retries with backoff
   versioning.py             raw.dataset_versions: idempotent registration
@@ -149,12 +161,15 @@ ingestion/
   geoboundaries.py          geoBoundaries API resolution, GeoJSON reader + loader
   crosswalk.py              reads the city crosswalk seed
   pipeline.py               download / sample runs, one transaction per file
-  sample.py                 rebuilds data/sample from the latest downloads
+  sample.py                 rebuilds the boundary sample; writes manifest.json
+  synthetic.py              generates the SYNTHETIC EDGAR-shaped fixture (seeded, reproducible)
   sql/raw_tables.sql        raw DDL (idempotent)
 transform/seeds/city_crosswalk.csv   the 25 cities: EDGAR id <-> geoBoundaries shape
 data/sample/                committed offline sample + manifest.json
+  edgar/…_SYNTHETIC.xlsx    invented values, real structure
+  geoboundaries/            real polygons for the 25 cities, unmodified
 data/raw/                   full downloads (git-ignored), named <sha256-prefix>_<file>
-tests/                      pytest: unit + rolled-back DB integration tests
+tests/                      pytest against warehouse_test: unit + rolled-back integration tests
 transform/, orchestration/  dbt (Stage 3) and Dagster (Stage 5)
 ```
 
@@ -188,10 +203,62 @@ source declares (`ton/year`). Boundaries are stored as GeoJSON. Typing, unpivoti
 unit handling, name repair and conversion to PostGIS geometry belong to the modelled
 layer (Stage 3).
 
-**Samples.** `python -m ingestion make-sample` cuts the crosswalk cities out of the
-latest downloaded files. It keeps their original format, so the same loader reads
-both. `manifest.json` records the upstream URL and SHA-256 each sample came from, and
-sample versions are stored with `origin = 'sample'` and `upstream_sha256`.
+**Samples.** `data/sample/manifest.json` lists every committed file and where it came
+from. Each file is loaded with the same loader as the real data.
+
+| Sample file | `origin` | Built by | Provenance recorded |
+|---|---|---|---|
+| geoBoundaries GeoJSON (24 files) | `sample` | `make-sample` cuts the crosswalk cities out of the latest downloads | upstream URL + `upstream_sha256` + download time |
+| EDGAR workbook | `synthetic` | `make-synthetic` generates it, no download involved | `source_url = synthetic:ingestion/synthetic.py`, no upstream hash |
+
+### Synthetic EDGAR fixture
+
+`ingestion/synthetic.py` writes `EDGAR_emiss_on_UCDB_2024_SYNTHETIC.xlsx`:
+
+- **Same structure as EDGAR v2024.** Same sheet names, the `Units` row, and the 195-column
+  header (`ID_UC_G0`, `UC_name`, `UC_country`, then `EMI_<pollutant>_<sector>_<year>`).
+  The generated header was checked against the real file and is identical.
+- **Invented values.** Every number comes from a seeded random generator. Columns
+  stay internally consistent: total GHG in CO2e is never below CO2, and nothing is
+  negative.
+- **Deliberate edge cases** for the modelled layer:
+  - the mis-encoded names exactly as EDGAR has them (`SÃ£o Paulo`, `MÃ©xico`);
+  - a second `Lagos, Nigeria` with a fake ID (990001), so a join by name would
+    double-count Lagos;
+  - an urban centre outside the crosswalk (990002);
+  - a sector that is zero in every year.
+- **Clearly labelled.** The filename, the first sheet ("SYNTHETIC DATA - NOT EDGAR"),
+  the manifest and `raw.dataset_versions.origin = 'synthetic'` all say so.
+- **Byte-for-byte reproducible.** An `.xlsx` is a zip, and openpyxl stamps entries and
+  the `modified` property with the current time. The generator pins both, so
+  regenerating gives the same SHA-256 and therefore no new dataset version.
+
+The urban-centre IDs and names in it are real. They come from the GHS Urban Centre
+Database (CC BY 4.0) and are needed to match the crosswalk.
+
+## Testing
+
+```bash
+uv run pytest -q                    # DB tests skip if Postgres is down
+REQUIRE_TEST_DB=1 uv run pytest -q  # CI: an unreachable test DB is a failure
+```
+
+Tests can never touch the real warehouse. There are three independent layers:
+
+1. **Credentials.** Tests connect as `test_pipeline`. `db/init/lib/layers.sql` revokes
+   `CONNECT` from `PUBLIC` on each database and grants it only to that database's own
+   roles, so `test_pipeline` → `warehouse` fails with *permission denied for database*.
+   `tests/test_db_isolation.py` asserts exactly that.
+2. **Name guard.** The session refuses to start unless `TEST_POSTGRES_DB` ends in `_test`,
+   and the fixture re-checks the connected database name.
+3. **Settings override.** For the whole session, `PIPELINE_*` and `POSTGRES_DB` point at
+   the test values, so code under test that builds its own connection also lands on
+   `warehouse_test`.
+
+Each DB test also runs inside `conn.transaction(force_rollback=True)`. The pipeline's own
+per-file transactions nest inside it as savepoints, so every test starts from an empty
+database. (An earlier version of the fixture lacked this and committed for real. On an
+idle connection, psycopg's `conn.transaction()` *is* the outermost transaction.)
 
 ## City matching (crosswalk)
 
@@ -230,14 +297,18 @@ geoBoundaries re-issued its IDs.
 
 | Source | Used for | Licence | Committed to this repo? |
 |---|---|---|---|
-| **EDGAR – Global emissions in urban areas, v2024** (European Commission, JRC) [dataset page](https://edgar.jrc.ec.europa.eu/dataset_ucdb) | GHG per urban centre and sector, 1975–2022, t CO2e (GWP100, AR5) | © European Union 2024, JRC. The IEA-EDGAR CO2 component (fossil fuel combustion) is **CC BY-NC-ND 4.0**. The general licence text is truncated in the file and not stated on the [terms page](https://edgar.jrc.ec.europa.eu/terms). | **No.** Downloaded at run time. Committed tests will use a clearly labelled synthetic fixture. |
+| **EDGAR – Global emissions in urban areas, v2024** (European Commission, JRC) [dataset page](https://edgar.jrc.ec.europa.eu/dataset_ucdb) | GHG per urban centre and sector, 1975–2022, t CO2e (GWP100, AR5) | © European Union 2024, JRC. The IEA-EDGAR CO2 component (fossil fuel combustion) is **CC BY-NC-ND 4.0**. The general licence text is truncated in the file and not stated on the [terms page](https://edgar.jrc.ec.europa.eu/terms). | **No real rows.** Downloaded at run time. The repo holds only a [synthetic fixture](#synthetic-edgar-fixture) with EDGAR's structure and invented values. |
 | **geoBoundaries gbOpen** (William & Mary geoLab) [geoboundaries.org](https://www.geoboundaries.org) | Administrative boundaries, ADM1/ADM2 | Per country, see below | Yes: one polygon per city, unmodified, in `data/sample/geoboundaries/` |
-| **GHS Urban Centre Database R2024A** (European Commission, JRC, GHSL) [product page](https://human-settlement.emergency.copernicus.eu/ghs_ucdb_2024.php) | Urban-centre polygons (*planned*) | Reuse authorised with acknowledgement; GHSL data are described as CC BY 4.0 | Planned |
+| **GHS Urban Centre Database R2024A, V1-2** (European Commission, JRC, GHSL) [product page](https://human-settlement.emergency.copernicus.eu/ghs_ucdb_2024.php) | Urban-centre polygons (*in progress*); urban-centre IDs and names in the synthetic fixture | **CC BY 4.0**, per the dataset's own [`copyright.txt`](https://jeodpp.jrc.ec.europa.eu/ftp/jrc-opendata/GHSL/GHS_UCDB_GLOBE_R2024A/GHS_UCDB_GLOBE_R2024A/copyright.txt): reuse allowed with credit and with changes indicated | IDs and names only, so far |
 
 EDGAR citation (from the dataset page): Crippa, M. et al., *EDGAR_emissions_urban_areas*,
 European Commission, Joint Research Centre (JRC), http://data.europa.eu/89h/c0c49cd7-4a80-4a94-8c34-375289c12b2d.
 See also Crippa et al. (2021), *Environmental Research Letters* 16, 074033,
 doi:10.1088/1748-9326/ac00e2.
+
+GHS-UCDB citation (from the dataset readme): Mari Rivero, I.; Melchiorri, M.; Florio, P.;
+Schiavina, M. et al. (2024): *GHS-UCDB R2024A - GHS Urban Centre Database 2025*. European
+Commission, Joint Research Centre (JRC). doi:10.2905/1a338be6-7eaf-480c-9664-3a8ade88cbcd
 
 geoBoundaries citation: Runfola, D. et al. (2020), *geoBoundaries: A global database of
 political administrative boundaries*, PLoS ONE 15(4): e0231866.
@@ -273,6 +344,10 @@ fetched from a commit-pinned GitHub URL, recorded in `raw.dataset_versions.sourc
   idempotency and lineage from one mechanism.
 - **Admin boundaries plus a reviewed crosswalk, joined by ID.** Cities report emissions
   for their administrative territory, and names are too unreliable to join on.
+- **Synthetic, not real, EDGAR rows in the repo.** It respects the ND licence term while
+  still testing the real loader, file format and known data-quality problems offline.
+- **A separate test database with its own roles**, so isolation is enforced by
+  Postgres permissions rather than by careful configuration.
 - **Python 3.12 only.** dagster-dbt 0.29.28 declares `requires_python <3.14`. uv
   ignores that cap and would install on 3.14, but pip correctly refuses, so 3.14 is
   unsupported here. 3.11–3.13 all install and import cleanly.
@@ -286,9 +361,15 @@ fetched from a commit-pinned GitHub URL, recorded in `raw.dataset_versions.sourc
   inside this boundary".
 - **London is excluded:** no single geoBoundaries unit for Greater London at ADM2.
 - **No migrations tool yet.** The raw DDL is `CREATE TABLE IF NOT EXISTS`, so changing an
-  existing table needs a manual `ALTER` (or recreating the volume).
-- **Tests use the dev database** until the separate `warehouse_test` database lands.
+  existing table needs a manual `ALTER` (or recreating the volume). Example: widening the
+  `origin` check to include `synthetic` on an existing database:
+  ```sql
+  ALTER TABLE raw.dataset_versions DROP CONSTRAINT dataset_versions_origin_check;
+  ALTER TABLE raw.dataset_versions ADD CONSTRAINT dataset_versions_origin_check
+    CHECK (origin IN ('download', 'sample', 'synthetic'));
+  ```
+- **Offline runs show invented emissions.** The synthetic fixture is for testing only.
 
 ## Next steps
 
-Finish the three Stage 2 open items above, then Stage 3 (dbt).
+Finish Stage 2 item 3 (GHS-UCDB urban-centre polygons and overlap), then Stage 3 (dbt).

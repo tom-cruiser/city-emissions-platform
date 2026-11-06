@@ -7,12 +7,17 @@ CREATE TABLE IF NOT EXISTS raw.dataset_versions (
     dataset_version_id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     source_name     text        NOT NULL,  -- e.g. 'edgar_ucdb', 'geoboundaries'
     source_key      text        NOT NULL,  -- which file of that source, e.g. 'v2024', 'RWA_ADM1'
-    origin          text        NOT NULL CHECK (origin IN ('download', 'sample')),
-    source_url      text        NOT NULL,  -- where the bytes came from (for samples: the upstream URL)
+    -- download = fetched from the source; sample = real extract committed to the repo;
+    -- synthetic = generated test data with the source's structure (never real values)
+    origin          text        NOT NULL
+                    CONSTRAINT dataset_versions_origin_check
+                    CHECK (origin IN ('download', 'sample', 'synthetic')),
+    source_url      text        NOT NULL,  -- where the bytes came from (samples: upstream URL)
     file_path       text        NOT NULL,  -- relative to the repo root
     file_sha256     char(64)    NOT NULL,  -- hash of the exact bytes loaded
     file_size_bytes bigint      NOT NULL,
     upstream_sha256 char(64),              -- samples only: hash of the full file the sample was cut from
+    -- download: when fetched. sample: when the upstream file was fetched. synthetic: when generated.
     license         text,
     downloaded_at   timestamptz NOT NULL,
     loaded_at       timestamptz NOT NULL DEFAULT now(),

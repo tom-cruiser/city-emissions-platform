@@ -79,11 +79,13 @@ def run_sample(conn: psycopg.Connection, sources: list[str]) -> list[LoadResult]
         if entry["source_name"] not in sources:
             continue
         path = config.SAMPLE_DIR / entry["path"]
+        # 'sample' = real extract (has upstream hash + download time);
+        # 'synthetic' = generated here (no upstream; its generation time stands in).
+        obtained_at = entry.get("upstream_downloaded_at") or entry["generated_at"]
         results.append(_load(conn, FileVersion(
-            source_name=entry["source_name"], source_key=entry["source_key"], origin="sample",
+            source_name=entry["source_name"], source_key=entry["source_key"], origin=entry["origin"],
             source_url=entry["source_url"], file_path=path, sha256=sha256_file(path),
-            size_bytes=path.stat().st_size,
-            downloaded_at=datetime.fromisoformat(entry["upstream_downloaded_at"]),
+            size_bytes=path.stat().st_size, downloaded_at=datetime.fromisoformat(obtained_at),
             license=entry["license"], upstream_sha256=entry["upstream_sha256"],
         )))
     return results

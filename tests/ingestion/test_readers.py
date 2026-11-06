@@ -1,12 +1,13 @@
 import pytest
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 
+from ingestion import synthetic
 from ingestion.config import EDGAR_DATA_SHEET, EDGAR_VARIABLES_SHEET, SAMPLE_DIR
 from ingestion.crosswalk import boundary_files_needed, read_crosswalk
 from ingestion.edgar import SourceFormatError, read_edgar_workbook
 from ingestion.geoboundaries import read_features
 
-EDGAR_SAMPLE = SAMPLE_DIR / "edgar" / "EDGAR_emiss_on_UCDB_2024.xlsx"
+EDGAR_FIXTURE = SAMPLE_DIR / "edgar" / synthetic.FILENAME
 
 
 def test_crosswalk_keys_are_unique():
@@ -23,18 +24,45 @@ def test_boundary_files_are_one_per_country_and_level():
     assert len(files) == len(set(files)) == 24  # 25 cities in 24 countries (South Africa has two)
 
 
-@pytest.mark.skipif(
-    not EDGAR_SAMPLE.exists(),
-    reason="synthetic EDGAR fixture not created yet (real EDGAR rows are not committed: licence)",
-)
-def test_reads_edgar_sample_unchanged():
-    unit, rows = read_edgar_workbook(EDGAR_SAMPLE)
+def test_synthetic_fixture_is_labelled_synthetic():
+    wb = load_workbook(EDGAR_FIXTURE, read_only=True)
+    first_line = next(wb["citations and references"].iter_rows(values_only=True))[0]
+    assert first_line == "SYNTHETIC DATA - NOT EDGAR"
+    assert "SYNTHETIC" in EDGAR_FIXTURE.name
+
+
+def test_synthetic_fixture_covers_every_crosswalk_city():
+    _, rows = read_edgar_workbook(EDGAR_FIXTURE)
+    fixture_ids = {r["ID_UC_G0"] for r in rows}
+    assert {int(r["edgar_uc_id"]) for r in read_crosswalk()} <= fixture_ids
+
+
+def test_reads_synthetic_fixture_with_the_real_loader():
+    unit, rows = read_edgar_workbook(EDGAR_FIXTURE)
     assert unit == "ton/year"
-    assert len(rows) == 25
-    kigali = next(r for r in rows if r["ID_UC_G0"] == 597)
-    assert kigali["UC_name"] == "Kigali"
-    # Raw keeps the source's own encoding damage; the modelled layer repairs it.
-    assert next(r for r in rows if r["ID_UC_G0"] == 7277)["UC_name"] == "SÃ£o Paulo"
+    assert len(rows) == 27  # 25 crosswalk cities + 2 edge cases
+    assert list(rows[0]) == synthetic.header()  # 195 columns, EDGAR v2024 order
+
+    by_id = {r["ID_UC_G0"]: r for r in rows}
+    # Mis-encoding is kept exactly as EDGAR publishes it; the modelled layer repairs it.
+    assert by_id[7277]["UC_name"] == "SÃ£o Paulo"
+    assert by_id[5402]["UC_country"] == "MÃ©xico"
+    # Duplicate (name, country): only an ID join tells these apart.
+    lagos = [r for r in rows if (r["UC_name"], r["UC_country"]) == ("Lagos", "Nigeria")]
+    assert sorted(r["ID_UC_G0"] for r in lagos) == [1289, synthetic.DUPLICATE_NAME_ID]
+
+
+def test_synthetic_values_are_plausible_in_shape():
+    _, rows = read_edgar_workbook(EDGAR_FIXTURE)
+    values = [v for r in rows for k, v in r.items() if k.startswith("EMI_")]
+    assert all(v >= 0 for v in values)
+    for r in rows:  # total GHG (CO2e) includes CO2, so it can never be smaller
+        for s in synthetic.SECTORS:
+            for y in synthetic.YEARS:
+                assert r[f"EMI_GWP_100_AR5_GHG_{s}_{y}"] >= r[f"EMI_CO2_{s}_{y}"]
+    uc_id, sector = synthetic.ZERO_SECTOR
+    zero_row = next(r for r in rows if r["ID_UC_G0"] == uc_id)
+    assert all(v == 0 for k, v in zero_row.items() if f"_{sector}_" in k)
 
 
 def test_rejects_edgar_file_with_changed_layout(tmp_path):
@@ -47,6 +75,13 @@ def test_rejects_edgar_file_with_changed_layout(tmp_path):
 
     with pytest.raises(SourceFormatError, match="UC_name"):
         read_edgar_workbook(path)
+
+
+def test_synthetic_generation_is_reproducible(tmp_path):
+    a, b = tmp_path / "a.xlsx", tmp_path / "b.xlsx"
+    synthetic.write_synthetic_edgar(a)
+    synthetic.write_synthetic_edgar(b)
+    assert a.read_bytes() == b.read_bytes() == EDGAR_FIXTURE.read_bytes()
 
 
 def test_reads_geoboundaries_sample():

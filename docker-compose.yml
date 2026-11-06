@@ -1,4 +1,4 @@
-# Stage 1: just the warehouse. Ingestion, Dagster and the API are added in later stages.
+# The warehouse (and warehouse_test). Ingestion, Dagster and the API are added in later stages.
 name: city-emissions-platform
 
 services:
@@ -14,6 +14,12 @@ services:
       PIPELINE_PASSWORD: ${PIPELINE_PASSWORD}
       API_READER_USER: ${API_READER_USER}
       API_READER_PASSWORD: ${API_READER_PASSWORD}
+      # Read by db/init/02-test-db.sh to create warehouse_test and its roles.
+      TEST_POSTGRES_DB: ${TEST_POSTGRES_DB}
+      TEST_PIPELINE_USER: ${TEST_PIPELINE_USER}
+      TEST_PIPELINE_PASSWORD: ${TEST_PIPELINE_PASSWORD}
+      TEST_API_READER_USER: ${TEST_API_READER_USER}
+      TEST_API_READER_PASSWORD: ${TEST_API_READER_PASSWORD}
     ports:
       # Bound to localhost only, so the DB is not exposed on your network.
       - "127.0.0.1:${POSTGRES_PORT:-5434}:5432"
