@@ -48,3 +48,27 @@ CREATE TABLE IF NOT EXISTS raw.geoboundaries_features (
     geometry           jsonb   NOT NULL,  -- GeoJSON geometry, WGS84 per RFC 7946
     PRIMARY KEY (dataset_version_id, feature_index)
 );
+
+-- GHS-UCDB urban-centre polygons, one row per feature of the GeoPackage layer.
+-- Geometry is stored exactly as published: native CRS (World Mollweide, ESRI:54009),
+-- no reprojection, and NOT repaired. Invalid polygons are counted by the load checks
+-- below and fixed with ST_MakeValid in dbt staging (Stage 3), never here.
+CREATE TABLE IF NOT EXISTS raw.ghs_ucdb_urban_centres (
+    dataset_version_id bigint   NOT NULL REFERENCES raw.dataset_versions,
+    source_row_number  integer  NOT NULL,  -- 1 = first feature in the layer (rowid order)
+    properties         jsonb    NOT NULL,  -- every attribute column, untouched ({"ID_UC_G0": 597, ...})
+    geom               geometry NOT NULL,  -- WKB from the file + SRID from its gpkg_spatial_ref_sys
+    PRIMARY KEY (dataset_version_id, source_row_number)
+);
+
+-- Load-time checks: one row per check per dataset version, written in the same
+-- transaction as the rows they describe. A check that FAILS raises and rolls the whole
+-- file back, so only 'pass' and 'warn' outcomes are ever stored.
+CREATE TABLE IF NOT EXISTS raw.load_checks (
+    dataset_version_id bigint NOT NULL REFERENCES raw.dataset_versions,
+    check_name         text   NOT NULL,  -- e.g. 'row_count', 'srid', 'id_match_edgar', 'geometry_valid'
+    status             text   NOT NULL CHECK (status IN ('pass', 'warn')),
+    detail             jsonb  NOT NULL,  -- numbers behind the outcome, e.g. {"invalid": 3, "ids": [...]}
+    checked_at         timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (dataset_version_id, check_name)
+);

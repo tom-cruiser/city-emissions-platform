@@ -15,7 +15,7 @@ class FileVersion:
 
     source_name: str
     source_key: str
-    origin: str  # 'download' or 'sample'
+    origin: str  # 'download', 'sample' or 'synthetic'
     source_url: str
     file_path: Path
     sha256: str
@@ -33,6 +33,7 @@ class LoadResult:
     rows_loaded: int
     skipped: bool  # True when this exact file was already loaded
     error: str | None = None  # set when this file failed; other files still load
+    warnings: tuple[str, ...] = ()  # load checks that passed with a warning (raw.load_checks)
 
 
 def repo_relative(path: Path) -> str:

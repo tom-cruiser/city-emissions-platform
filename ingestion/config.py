@@ -27,6 +27,26 @@ EDGAR_LICENSE = (
     "is licensed CC BY-NC-ND 4.0. See https://edgar.jrc.ec.europa.eu/dataset_ucdb"
 )
 
+# --- GHS Urban Centre Database (urban-centre polygons EDGAR is computed on) -----
+GHS_UCDB_SOURCE_NAME = "ghs_ucdb"
+GHS_UCDB_SOURCE_KEY = "R2024A_V1_2"
+GHS_UCDB_URL = (
+    "https://jeodpp.jrc.ec.europa.eu/ftp/jrc-opendata/GHSL/GHS_UCDB_GLOBE_R2024A/"
+    "GHS_UCDB_GLOBE_R2024A/V1-2/GHS_UCDB_GLOBE_R2024A_V1_2.zip"
+)
+GHS_UCDB_FILENAME = "GHS_UCDB_GLOBE_R2024A_V1_2.zip"
+GHS_UCDB_GPKG_MEMBER = "GHS_UCDB_GLOBE_R2024A.gpkg"  # the zip also holds PDFs and an xlsx
+# Every thematic layer repeats the same polygons; this one has ID, names, area, population.
+GHS_UCDB_LAYER = "GHSL_UCDB_THEME_GENERAL_CHARACTERISTICS_GLOBE_R2024A"
+GHS_UCDB_ID_COLUMN = "ID_UC_G0"  # the same ID EDGAR uses
+GHS_UCDB_AREA_COLUMN = "GC_UCA_KM2_2025"  # source-declared area, km²
+# World Mollweide (equal area). Downstream overlap ratios assume it, so the load fails otherwise.
+GHS_UCDB_EXPECTED_SRS = ("ESRI", 54009)
+GHS_UCDB_LICENSE = (
+    "CC BY 4.0, (c) European Union 2024, JRC GHSL. Mari Rivero, I. et al. (2024): GHS-UCDB R2024A, "
+    "doi:10.2905/1a338be6-7eaf-480c-9664-3a8ade88cbcd"
+)
+
 # --- geoBoundaries administrative boundaries ----------------------------------
 GEOBOUNDARIES_SOURCE_NAME = "geoboundaries"
 GEOBOUNDARIES_API = "https://www.geoboundaries.org/api/current/gbOpen/{iso3}/{level}/"

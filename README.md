@@ -5,7 +5,7 @@ It ingests open emissions data and city boundaries, models them in layered
 PostgreSQL/PostGIS storage with dbt, orchestrates with Dagster, and serves curated
 data through a read-only FastAPI service.
 
-> **Status: work in progress.** Stages 1–2 are built; Stage 2 has one open item.
+> **Status: work in progress.** Stages 1–2 are built; Stage 3 (dbt) is next.
 > See [Build status](#build-status). This README describes only what exists today and
 > marks everything planned as such.
 
@@ -14,7 +14,7 @@ data through a read-only FastAPI service.
 | Stage | Scope | Status |
 |---|---|---|
 | 1 | Repo structure, Docker Compose, PostGIS, schemas and roles | ✅ Done |
-| 2 | Source verification, Python ingestion into `raw`, dataset versioning | 🟡 Mostly done: open items below |
+| 2 | Source verification, Python ingestion into `raw`, dataset versioning, load checks | ✅ Done |
 | 3 | dbt: modelled layer, seeds, tests | ⏳ Planned |
 | 4 | Reporting layer and dbt snapshots | ⏳ Planned |
 | 5 | Dagster orchestration | ⏳ Planned |
@@ -29,9 +29,10 @@ data through a read-only FastAPI service.
    EDGAR's exact structure and invented values. See [Synthetic EDGAR fixture](#synthetic-edgar-fixture).
 2. ✅ **Separate `warehouse_test` database.** Tests run only against `warehouse_test`,
    whose roles cannot connect to `warehouse`. See [Testing](#testing).
-3. ⏳ **GHS-UCDB urban-centre polygons.** EDGAR emissions will be attached to their own
-   urban-centre polygons, with a PostGIS overlap ratio against each city's administrative
-   boundary and a flag on low-overlap pairs.
+3. ✅ **GHS-UCDB urban-centre polygons.** The polygons EDGAR's emissions are computed on
+   are loaded into `raw` with load checks. See [GHS-UCDB urban centres](#ghs-ucdb-urban-centres).
+   The overlap with administrative boundaries is *not* computed here: it belongs to dbt
+   (Stage 3), as decided in [ADR 0001](docs/adr/0001-urban-centre-overlap.md).
 
 ## Architecture (current)
 
@@ -40,6 +41,7 @@ flowchart LR
     subgraph Sources
         E[EDGAR urban areas v2024<br/>xlsx, JRC]
         G[geoBoundaries gbOpen<br/>GeoJSON per country]
+        U[GHS-UCDB R2024A V1.2<br/>GeoPackage, JRC]
     end
     subgraph ingestion["ingestion (Python)"]
         D[download + SHA-256<br/>retries, content-addressed files]
@@ -53,6 +55,7 @@ flowchart LR
     X[city_crosswalk.csv seed]
     E --> D
     G --> D
+    U --> D
     D --> L --> R
     X -. which boundary files .-> D
     R -. Stage 3: dbt .-> M -. Stage 4 .-> P
@@ -79,9 +82,11 @@ keeps that grant on tables that dbt drops and recreates. See `db/init/01-init.sh
 erDiagram
     dataset_versions ||--o{ edgar_ucdb_emissions : "produced"
     dataset_versions ||--o{ geoboundaries_features : "produced"
+    dataset_versions ||--o{ ghs_ucdb_urban_centres : "produced"
+    dataset_versions ||--o{ load_checks : "checked"
     dataset_versions {
         bigint dataset_version_id PK
-        text source_name "edgar_ucdb | geoboundaries"
+        text source_name "edgar_ucdb | geoboundaries | ghs_ucdb"
         text source_key "v2024 | RWA_ADM1 ..."
         text origin "download | sample | synthetic"
         text source_url
@@ -105,6 +110,18 @@ erDiagram
         jsonb properties
         jsonb geometry "GeoJSON, WGS84"
     }
+    ghs_ucdb_urban_centres {
+        bigint dataset_version_id FK
+        int source_row_number
+        jsonb properties "all layer attributes, untouched"
+        geometry geom "as published: ESRI:54009, not repaired"
+    }
+    load_checks {
+        bigint dataset_version_id FK
+        text check_name
+        text status "pass | warn"
+        jsonb detail
+    }
 ```
 
 ## Quick start
@@ -116,8 +133,8 @@ cp .env.example .env                 # then change the passwords
 docker compose up -d --wait          # PostGIS on 127.0.0.1:5434 (warehouse + warehouse_test)
 uv sync                              # Python 3.12 environment from uv.lock
 
-uv run python -m ingestion load --mode sample     # offline: synthetic EDGAR + real boundary extract
-uv run python -m ingestion load --mode download   # real files (~25 MB + boundaries)
+uv run python -m ingestion load --mode sample     # offline: synthetic EDGAR + real boundary and urban-centre extracts
+uv run python -m ingestion load --mode download   # real files (~25 MB EDGAR, ~70 MB boundaries, 277 MB GHS-UCDB)
 uv run pytest -q                                  # runs against warehouse_test only
 ```
 
@@ -159,18 +176,22 @@ ingestion/
   versioning.py             raw.dataset_versions: idempotent registration
   edgar.py                  EDGAR workbook reader + loader (fails loudly on layout change)
   geoboundaries.py          geoBoundaries API resolution, GeoJSON reader + loader
+  gpkg.py                   GeoPackage reader: stdlib sqlite3 + GPKG blob header, no GDAL
+  ghs_ucdb.py               GHS-UCDB loader + load checks (raw.load_checks)
   crosswalk.py              reads the city crosswalk seed
   pipeline.py               download / sample runs, one transaction per file
-  sample.py                 rebuilds the boundary sample; writes manifest.json
+  sample.py                 rebuilds the boundary and GHS-UCDB samples; writes manifest.json
   synthetic.py              generates the SYNTHETIC EDGAR-shaped fixture (seeded, reproducible)
   sql/raw_tables.sql        raw DDL (idempotent)
 transform/seeds/city_crosswalk.csv   the 25 cities: EDGAR id <-> geoBoundaries shape
 data/sample/                committed offline sample + manifest.json
   edgar/…_SYNTHETIC.xlsx    invented values, real structure
   geoboundaries/            real polygons for the 25 cities, unmodified
+  ghs_ucdb/…_crosswalk_cities.gpkg   the 25 crosswalk urban centres, one layer (160 KB)
 data/raw/                   full downloads (git-ignored), named <sha256-prefix>_<file>
 tests/                      pytest against warehouse_test: unit + rolled-back integration tests
 transform/, orchestration/  dbt (Stage 3) and Dagster (Stage 5)
+docs/adr/                   architecture / methodology decision records
 ```
 
 `transform/` and `orchestration/` are deliberately not called `dbt/` and `dagster/`.
@@ -209,6 +230,7 @@ from. Each file is loaded with the same loader as the real data.
 | Sample file | `origin` | Built by | Provenance recorded |
 |---|---|---|---|
 | geoBoundaries GeoJSON (24 files) | `sample` | `make-sample` cuts the crosswalk cities out of the latest downloads | upstream URL + `upstream_sha256` + download time |
+| GHS-UCDB GeoPackage | `sample` | `make-sample` copies the 25 crosswalk urban centres of one layer out of the latest download | upstream URL + `upstream_sha256` (of the zip) + download time; licence text lists the changes |
 | EDGAR workbook | `synthetic` | `make-synthetic` generates it, no download involved | `source_url = synthetic:ingestion/synthetic.py`, no upstream hash |
 
 ### Synthetic EDGAR fixture
@@ -235,6 +257,71 @@ from. Each file is loaded with the same loader as the real data.
 
 The urban-centre IDs and names in it are real. They come from the GHS Urban Centre
 Database (CC BY 4.0) and are needed to match the crosswalk.
+
+## GHS-UCDB urban centres
+
+EDGAR computes emissions per GHS urban centre. To compare those territories with the
+administrative boundaries, the urban-centre polygons are loaded from
+[GHS-UCDB R2024A V1.2](https://human-settlement.emergency.copernicus.eu/ghs_ucdb_2024.php)
+(a 277 MB zip holding one 285 MB GeoPackage with 16 layers).
+
+- **One layer.** All 15 thematic layers repeat the same 11,422 polygons. Only
+  `GHSL_UCDB_THEME_GENERAL_CHARACTERISTICS_GLOBE_R2024A` is loaded: ID, names, country,
+  area, population, geometry.
+- **No GDAL.** `ingestion/gpkg.py` reads the file with stdlib `sqlite3` and parses the
+  GeoPackageBinary header (magic, flags, SRS id, envelope) itself. The WKB after the header
+  goes to PostGIS untouched (`ST_GeomFromWKB`). Header parsing is tested on constructed
+  blobs (both byte orders, every envelope size, malformed input) and on the 25 real
+  polygons, against an independent pure-Python WKB reader.
+- **Stored as published.** Native CRS (World Mollweide, ESRI:54009), no reprojection, no
+  repair. The downloaded zip is the dataset version. The extracted `.gpkg` next to it is
+  a cache named after the zip's hash.
+
+### Load checks
+
+Every GHS-UCDB load runs these checks in the same transaction as the rows. A failing
+check raises and rolls the file back. Passes and warnings go to `raw.load_checks`.
+
+| Check | Fails when | Result on the full file (11,422 polygons) |
+|---|---|---|
+| `row_count` | rows in raw ≠ features in the layer | pass: 11,422 = 11,422 |
+| `gpkg_header` | a blob's SRS id ≠ the layer's, or its envelope ≠ the bounds PostGIS computes from the WKB | pass: 0 mismatches |
+| `srid` | layer SRS is not ESRI:54009, it is missing from `spatial_ref_sys`, or a stored SRID differs | pass: all 54009 (`World_Mollweide`, present in the stock PostGIS image) |
+| `geometry_type` | anything other than (MULTI)POLYGON | pass: 11,422 MULTIPOLYGON |
+| `geometry_valid` | never fails; warns on invalid polygons | **warn: 22 invalid** (all ring self-intersections, none of our 25 cities); `ST_CollectionExtract(ST_MakeValid(geom), 3)` repairs all 22 |
+| `area_vs_source` | warns if `ST_Area` differs from the source's `GC_UCA_KM2_2025` by > 5% | pass: identical for all 11,422 (the polygons are unions of 1 km² Mollweide cells) |
+| `id_match_edgar` | null or duplicate IDs, or a crosswalk city missing from UCDB | **warn: 11,422 matched, 264 EDGAR-only, 0 UCDB-only**; all 25 crosswalk cities present in both |
+
+Inspect them:
+
+```bash
+docker compose exec db psql -U climate -d warehouse -c \
+  "SELECT check_name, status, detail->>'summary' FROM raw.load_checks ORDER BY dataset_version_id, check_name"
+```
+
+### Overlap with administrative boundaries (Stage 3, decided)
+
+Computed in dbt, not ingestion. The full decision and its reasoning are in
+[ADR 0001](docs/adr/0001-urban-centre-overlap.md).
+
+- **Staging repairs geometry** with `ST_CollectionExtract(ST_MakeValid(geom), 3)`. Raw is
+  never modified.
+- **Areas are compared in Mollweide** (ESRI:54009), with boundaries transformed from 4326.
+- **Flag** `low_urban_overlap` when *share of the urban centre inside the boundary* <
+  `var('min_urban_overlap')`, **default 0.5**. IoU and *share of the boundary covered*
+  are reported as information.
+- **The 0.5 is a methodology decision for domain specialists** (city GHG inventory
+  practitioners), not an engineering one. It is a dbt var so it can be changed without
+  touching code.
+
+**Is Mollweide safe for this?** For ratios, yes. For absolute km², not quite. PROJ's
+Mollweide is a spherical projection applied with the WGS84 semi-major axis, so absolute
+areas of our 25 boundaries are off by **up to 0.67%** (latitude-dependent) against
+ellipsoidal `geography` areas. The error is nearly the same for both polygons of a city,
+so it cancels in the overlap share. The share computed in Mollweide differs from the
+geodesic one by at most **1.9 × 10⁻⁵** across all 25 cities (asserted in
+`tests/ingestion/test_ghs_ucdb_db.py`). Absolute boundary areas, where reported, should use
+`geography`.
 
 ## Testing
 
@@ -291,7 +378,11 @@ geoBoundaries re-issued its IDs.
 | No negative or blank values across 11,686 rows | EDGAR | Will become a dbt test |
 | Licence text truncated inside the file ("Unl…", "compli…") | EDGAR citations sheet | Licence recorded only as far as verified |
 | Intermittent HTTP 504 | geoBoundaries (GitHub LFS) | Retries with backoff; per-file isolation |
-| Urban centre ≠ administrative area | EDGAR vs geoBoundaries | Overlap analysis planned (Stage 2, item 3) |
+| Urban centre ≠ administrative area | EDGAR vs geoBoundaries | Overlap share + flag in dbt (Stage 3, [ADR 0001](docs/adr/0001-urban-centre-overlap.md)) |
+| 264 EDGAR urban-centre IDs are not in GHS-UCDB V1.2 (mostly small centres in Yemen, Ethiopia, Iran, Sudan). EDGAR's IDs run 1–11,686 without gaps; V1.2 has 11,422 of them | EDGAR v2024 vs GHS-UCDB V1.2 | Reported by `id_match_edgar`. None are crosswalk cities. EDGAR was evidently built on an earlier UCDB release with 11,686 centres, so a matched ID's V1.2 polygon *may* differ from the one EDGAR used (see limitations) |
+| 379 matched IDs have a different name in EDGAR and UCDB after repairing mojibake, e.g. `San Jose` / `San Francisco` (same Bay Area centre), `New York` / `New York City`; one country differs (`Caspian Sea` / `Russia`, ID 143) | EDGAR vs GHS-UCDB | Naming conventions, not different places, in the cases checked. Another reason to join on ID. All 25 crosswalk cities agree (Delhi: `Ghaziabad [New Delhi]` / `New Delhi`) |
+| 22 invalid polygons (ring self-intersection) | GHS-UCDB | Kept in raw; `ST_MakeValid` in dbt staging; none are crosswalk cities |
+| geoBoundaries' *Accra Metropolis* is 5.7 km² (20 vertices) against a 1,121 km² urban centre: only ~0.5% of the urban centre lies inside it | geoBoundaries GHA ADM2 | Ghana split the old metropolitan assembly into several districts (2018–19), so the matched unit is now only a small core. Will be flagged in Stage 3 at any sensible threshold; the crosswalk choice for Accra needs review |
 
 ## Data sources & licences
 
@@ -299,7 +390,7 @@ geoBoundaries re-issued its IDs.
 |---|---|---|---|
 | **EDGAR – Global emissions in urban areas, v2024** (European Commission, JRC) [dataset page](https://edgar.jrc.ec.europa.eu/dataset_ucdb) | GHG per urban centre and sector, 1975–2022, t CO2e (GWP100, AR5) | © European Union 2024, JRC. The IEA-EDGAR CO2 component (fossil fuel combustion) is **CC BY-NC-ND 4.0**. The general licence text is truncated in the file and not stated on the [terms page](https://edgar.jrc.ec.europa.eu/terms). | **No real rows.** Downloaded at run time. The repo holds only a [synthetic fixture](#synthetic-edgar-fixture) with EDGAR's structure and invented values. |
 | **geoBoundaries gbOpen** (William & Mary geoLab) [geoboundaries.org](https://www.geoboundaries.org) | Administrative boundaries, ADM1/ADM2 | Per country, see below | Yes: one polygon per city, unmodified, in `data/sample/geoboundaries/` |
-| **GHS Urban Centre Database R2024A, V1-2** (European Commission, JRC, GHSL) [product page](https://human-settlement.emergency.copernicus.eu/ghs_ucdb_2024.php) | Urban-centre polygons (*in progress*); urban-centre IDs and names in the synthetic fixture | **CC BY 4.0**, per the dataset's own [`copyright.txt`](https://jeodpp.jrc.ec.europa.eu/ftp/jrc-opendata/GHSL/GHS_UCDB_GLOBE_R2024A/GHS_UCDB_GLOBE_R2024A/copyright.txt): reuse allowed with credit and with changes indicated | IDs and names only, so far |
+| **GHS Urban Centre Database R2024A, V1-2** (European Commission, JRC, GHSL) [product page](https://human-settlement.emergency.copernicus.eu/ghs_ucdb_2024.php) | Urban-centre polygons; urban-centre IDs and names in the synthetic fixture | **CC BY 4.0**, per the V1-2 [`copyright.txt`](https://jeodpp.jrc.ec.europa.eu/ftp/jrc-opendata/GHSL/GHS_UCDB_GLOBE_R2024A/GHS_UCDB_GLOBE_R2024A/V1-2/copyright.txt) (re-checked 2026-11-06): reuse allowed with credit and with changes indicated | Yes: the 25 crosswalk urban centres, one layer, attributes and geometry unchanged (160 KB). The changes are listed in `manifest.json` |
 
 EDGAR citation (from the dataset page): Crippa, M. et al., *EDGAR_emissions_urban_areas*,
 European Commission, Joint Research Centre (JRC), http://data.europa.eu/89h/c0c49cd7-4a80-4a94-8c34-375289c12b2d.
@@ -348,6 +439,11 @@ fetched from a commit-pinned GitHub URL, recorded in `raw.dataset_versions.sourc
   still testing the real loader, file format and known data-quality problems offline.
 - **A separate test database with its own roles**, so isolation is enforced by
   Postgres permissions rather than by careful configuration.
+- **GeoPackage read without GDAL.** The format is SQLite plus a small documented header.
+  Parsing it in ~100 lines avoids a heavy native dependency in the pipeline image, and every
+  load cross-checks the parsed header against PostGIS.
+- **Load checks stored next to the data** (`raw.load_checks`), so a warning such as
+  "22 invalid polygons" is queryable lineage, not a log line that scrolls away.
 - **Python 3.12 only.** dagster-dbt 0.29.28 declares `requires_python <3.14`. uv
   ignores that cap and would install on 3.14, but pip correctly refuses, so 3.14 is
   unsupported here. 3.11–3.13 all install and import cleanly.
@@ -356,9 +452,16 @@ fetched from a commit-pinned GitHub URL, recorded in `raw.dataset_versions.sourc
 
 - **Urban centre ≠ city boundary.** EDGAR measures a satellite-derived urban centre,
   while boundaries are administrative. Extents can differ greatly; Jakarta's urban
-  centre (123 Mt CO2e) extends well beyond DKI Jakarta. This will be quantified with the
-  planned overlap analysis. Until then, do not read an emissions figure as "emissions
-  inside this boundary".
+  centre (123 Mt CO2e) extends well beyond DKI Jakarta. The overlap share and flag arrive
+  with Stage 3. Until then, do not read an emissions figure as "emissions inside this
+  boundary".
+- **UCDB release vs EDGAR.** EDGAR v2024 uses 11,686 urban-centre IDs. GHS-UCDB V1.2 has
+  11,422. The polygons loaded are V1.2. For the 25 crosswalk cities the IDs, names and
+  countries agree, but whether every V1.2 polygon is identical to the one EDGAR used has
+  not been verified (it would need the older V1.0 release, another 277 MB).
+- **Downloads are not cached.** `load --mode download` re-fetches every file, including
+  the 277 MB GHS-UCDB zip (~25 min on the JRC server today); identical bytes are then
+  skipped at load.
 - **London is excluded:** no single geoBoundaries unit for Greater London at ADM2.
 - **No migrations tool yet.** The raw DDL is `CREATE TABLE IF NOT EXISTS`, so changing an
   existing table needs a manual `ALTER` (or recreating the volume). Example: widening the
@@ -372,4 +475,5 @@ fetched from a commit-pinned GitHub URL, recorded in `raw.dataset_versions.sourc
 
 ## Next steps
 
-Finish Stage 2 item 3 (GHS-UCDB urban-centre polygons and overlap), then Stage 3 (dbt).
+Stage 3 (dbt): staging models with geometry repair, the overlap model and
+`min_urban_overlap` flag from [ADR 0001](docs/adr/0001-urban-centre-overlap.md), and tests.

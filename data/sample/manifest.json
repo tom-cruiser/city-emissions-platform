@@ -1,5 +1,5 @@
 {
-  "description": "Offline sample used by tests, CI and first runs. geoBoundaries files are real extracts restricted to the cities in transform/seeds/city_crosswalk.csv. The EDGAR file is SYNTHETIC (invented values, real structure): real EDGAR rows are not redistributed. Rebuild with: python -m ingestion make-sample / make-synthetic",
+  "description": "Offline sample used by tests, CI and first runs. geoBoundaries and GHS-UCDB files are real extracts restricted to the cities in transform/seeds/city_crosswalk.csv. The EDGAR file is SYNTHETIC (invented values, real structure): real EDGAR rows are not redistributed. Rebuild with: python -m ingestion make-sample / make-synthetic",
   "files": [
     {
       "source_name": "edgar_ucdb",
@@ -275,6 +275,17 @@
       "license": "Creative Commons Attribution 3.0 Intergovernmental Organisations (CC BY 3.0 IGO)",
       "upstream_sha256": "bb4800b804811ce9cfa5f6bf535466e3f812751249f0e1b7375d5f5753570e7c",
       "upstream_downloaded_at": "2026-11-05T14:47:05.857900+00:00"
+    },
+    {
+      "source_name": "ghs_ucdb",
+      "source_key": "R2024A_V1_2",
+      "origin": "sample",
+      "path": "ghs_ucdb/GHS_UCDB_GLOBE_R2024A_V1_2_crosswalk_cities.gpkg",
+      "rows": 25,
+      "source_url": "https://jeodpp.jrc.ec.europa.eu/ftp/jrc-opendata/GHSL/GHS_UCDB_GLOBE_R2024A/GHS_UCDB_GLOBE_R2024A/V1-2/GHS_UCDB_GLOBE_R2024A_V1_2.zip",
+      "license": "CC BY 4.0, (c) European Union 2024, JRC GHSL. Mari Rivero, I. et al. (2024): GHS-UCDB R2024A, doi:10.2905/1a338be6-7eaf-480c-9664-3a8ade88cbcd. Changes: subset to the 25 crosswalk urban centres and the GHSL_UCDB_THEME_GENERAL_CHARACTERISTICS_GLOBE_R2024A layer only; R-tree index dropped; attributes and geometries unchanged.",
+      "upstream_sha256": "12dc8d366a6057b832a070ba3f7b7b7c601bad191da0417a666851f35f10db2e",
+      "upstream_downloaded_at": "2026-11-06T13:11:20.910694+00:00"
     }
   ]
 }

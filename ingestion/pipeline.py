@@ -19,13 +19,21 @@ from ingestion.db import ensure_raw_tables
 from ingestion.download import download, sha256_file
 from ingestion.edgar import load_edgar
 from ingestion.geoboundaries import load_geoboundaries, resolve_boundary_file
+from ingestion.ghs_ucdb import LoadCheckError, load_ghs_ucdb
 from ingestion.versioning import FileVersion, LoadResult
 
 LOADERS = {
     config.EDGAR_SOURCE_NAME: load_edgar,
     config.GEOBOUNDARIES_SOURCE_NAME: load_geoboundaries,
+    config.GHS_UCDB_SOURCE_NAME: load_ghs_ucdb,
 }
-SOURCES = {"edgar": config.EDGAR_SOURCE_NAME, "geoboundaries": config.GEOBOUNDARIES_SOURCE_NAME}
+SOURCES = {
+    "edgar": config.EDGAR_SOURCE_NAME,
+    "geoboundaries": config.GEOBOUNDARIES_SOURCE_NAME,
+    "ghs_ucdb": config.GHS_UCDB_SOURCE_NAME,
+}
+# GHS-UCDB loads last: its ID check compares against the EDGAR version already in raw.
+LOAD_ORDER = [config.EDGAR_SOURCE_NAME, config.GEOBOUNDARIES_SOURCE_NAME, config.GHS_UCDB_SOURCE_NAME]
 
 
 def _load(conn: psycopg.Connection, fv: FileVersion) -> LoadResult:
@@ -66,6 +74,18 @@ def run_download(conn: psycopg.Connection, sources: list[str]) -> list[LoadResul
                     config.GEOBOUNDARIES_SOURCE_NAME, f"{iso3}_{level}", None, 0,
                     skipped=False, error=f"{type(exc).__name__}: {exc}",
                 ))
+
+    if config.GHS_UCDB_SOURCE_NAME in sources:
+        f = download(config.GHS_UCDB_URL, config.RAW_DIR / "ghs_ucdb", config.GHS_UCDB_FILENAME, client=client)
+        fv = FileVersion(
+            source_name=config.GHS_UCDB_SOURCE_NAME, source_key=config.GHS_UCDB_SOURCE_KEY,
+            origin="download", source_url=config.GHS_UCDB_URL, file_path=f.path, sha256=f.sha256,
+            size_bytes=f.size_bytes, downloaded_at=f.downloaded_at, license=config.GHS_UCDB_LICENSE,
+        )
+        try:
+            results.append(_load(conn, fv))
+        except LoadCheckError as exc:
+            results.append(LoadResult(fv.source_name, fv.source_key, None, 0, skipped=False, error=str(exc)))
     return results
 
 
@@ -75,7 +95,7 @@ def run_sample(conn: psycopg.Connection, sources: list[str]) -> list[LoadResult]
         ensure_raw_tables(conn)
     manifest = json.loads(config.SAMPLE_MANIFEST.read_text(encoding="utf-8"))
     results = []
-    for entry in manifest["files"]:
+    for entry in sorted(manifest["files"], key=lambda e: LOAD_ORDER.index(e["source_name"])):
         if entry["source_name"] not in sources:
             continue
         path = config.SAMPLE_DIR / entry["path"]
