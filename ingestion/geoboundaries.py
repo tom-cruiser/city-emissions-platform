@@ -45,9 +45,9 @@ def read_features(path: Path) -> list[dict]:
 def load_geoboundaries(conn: psycopg.Connection, fv: FileVersion) -> LoadResult:
     """Load every feature of one geoBoundaries file into raw. Does not commit."""
     features = read_features(fv.file_path)
-    version_id = register_version(conn, fv, row_count=len(features))
-    if version_id is None:
-        return LoadResult(fv.source_name, fv.source_key, None, 0, skipped=True)
+    version_id, created = register_version(conn, fv, row_count=len(features))
+    if not created:
+        return LoadResult(fv.source_name, fv.source_key, version_id, 0, skipped=True)
 
     with conn.cursor() as cur, cur.copy(
         "COPY raw.geoboundaries_features"

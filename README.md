@@ -355,8 +355,17 @@ Johannesburg, Cape Town, Dakar, Kinshasa, Cairo, Buenos Aires, Mexico City, Bogo
 Lima, Delhi, Jakarta, Bangkok, Seoul, Tokyo, Berlin, Paris, São Paulo.
 
 `transform/seeds/city_crosswalk.csv` maps each city to an EDGAR urban-centre ID
-(`edgar_uc_id`) and a geoBoundaries shape (`gb_shape_id`), with a note per match. The
-join is by ID and never by name, because names in these sources are unreliable:
+(`edgar_uc_id`) and a geoBoundaries shape (`gb_shape_id`). Every row also has:
+
+- `match_note`: why this unit was chosen and anything known to be wrong with it.
+- `review_status`: `accepted` (unit choice documented, no known problem) or
+  `needs_review` (a known problem that a person has to resolve). `accepted` is an
+  engineering judgement. No city GHG inventory specialist has reviewed the list yet.
+
+Two cities are `needs_review`: **Accra** and **Buenos Aires**. In both the unit is right
+but geoBoundaries' polygon for it is not (see [data quality](#data-quality-findings-so-far)).
+
+The join is by ID and never by name, because names in these sources are unreliable:
 
 - EDGAR has **192 duplicate (name, country) pairs**.
 - Spellings differ: `Dar es-Salaam`, and Delhi's urban centre is `Ghaziabad [New Delhi]`.
@@ -382,7 +391,8 @@ geoBoundaries re-issued its IDs.
 | 264 EDGAR urban-centre IDs are not in GHS-UCDB V1.2 (mostly small centres in Yemen, Ethiopia, Iran, Sudan). EDGAR's IDs run 1–11,686 without gaps; V1.2 has 11,422 of them | EDGAR v2024 vs GHS-UCDB V1.2 | Reported by `id_match_edgar`. None are crosswalk cities. EDGAR was evidently built on an earlier UCDB release with 11,686 centres, so a matched ID's V1.2 polygon *may* differ from the one EDGAR used (see limitations) |
 | 379 matched IDs have a different name in EDGAR and UCDB after repairing mojibake, e.g. `San Jose` / `San Francisco` (same Bay Area centre), `New York` / `New York City`; one country differs (`Caspian Sea` / `Russia`, ID 143) | EDGAR vs GHS-UCDB | Naming conventions, not different places, in the cases checked. Another reason to join on ID. All 25 crosswalk cities agree (Delhi: `Ghaziabad [New Delhi]` / `New Delhi`) |
 | 22 invalid polygons (ring self-intersection) | GHS-UCDB | Kept in raw; `ST_MakeValid` in dbt staging; none are crosswalk cities |
-| geoBoundaries' *Accra Metropolis* is 5.7 km² (20 vertices) against a 1,121 km² urban centre: only ~0.5% of the urban centre lies inside it | geoBoundaries GHA ADM2 | Ghana split the old metropolitan assembly into several districts (2018–19), so the matched unit is now only a small core. Will be flagged in Stage 3 at any sensible threshold; the crosswalk choice for Accra needs review |
+| geoBoundaries' *Accra Metropolis* is 5.7 km² (5.6 km² in the full-resolution file, so not a simplification artefact). The official area of today's Accra Metropolitan District is **20.4 km²** (Ghana Statistical Service, 2021 PHC General Report Vol. 3A, p. 80). Only 0.5% of the 1,121 km² urban centre lies inside the polygon | geoBoundaries GHA ADM2 (2019 districts, source "USAID Ghana HPNO, Ghana Statistical Service") | Checked 2026-11-07. The **unit is right**: Accra Metropolis *is* the Accra Metropolitan Assembly, which Ghana cut down to a small core when it created 9 new districts in 2018–19. The **polygon is not**: it is ~28% of the official area. Crosswalk unchanged; `review_status = needs_review`. Stage 3's 0.01 overlap test warns on it |
+| geoBoundaries' *Ciudad Autónoma de Buenos Aires* is 948 km² and extends into the surrounding partidos. The official area is ~203 km² (Buenos Aires city government) | geoBoundaries ARG ADM1 (source "geoBoundaries, Wikimedia", year 2006) | Found while checking Accra. Same situation: right unit, wrong polygon. Crosswalk unchanged; `needs_review`. Its overlap share (0.40) looks plausible, so only an area check catches this. Stage 3 plan adds one |
 
 ## Data sources & licences
 
@@ -455,13 +465,18 @@ fetched from a commit-pinned GitHub URL, recorded in `raw.dataset_versions.sourc
   centre (123 Mt CO2e) extends well beyond DKI Jakarta. The overlap share and flag arrive
   with Stage 3. Until then, do not read an emissions figure as "emissions inside this
   boundary".
-- **UCDB release vs EDGAR.** EDGAR v2024 uses 11,686 urban-centre IDs. GHS-UCDB V1.2 has
-  11,422. The polygons loaded are V1.2. For the 25 crosswalk cities the IDs, names and
-  countries agree, but whether every V1.2 polygon is identical to the one EDGAR used has
-  not been verified (it would need the older V1.0 release, another 277 MB).
+- **EDGAR v2024 was built on an earlier GHS-UCDB release than the polygons loaded.**
+  EDGAR uses 11,686 urban-centre IDs; GHS-UCDB V1.2 (loaded here) has 11,422. For the 25
+  crosswalk cities the IDs, names and countries match, but **the shapes are not verified
+  identical** to those EDGAR computed emissions on. Checking would need the older
+  release (another 277 MB). Overlap figures therefore describe the V1.2 polygon, which
+  may differ from EDGAR's territory.
+- **geoBoundaries polygons are not checked against official areas** except for Accra
+  and Buenos Aires, both found wrong. Stage 3 adds an area check.
 - **Downloads are not cached.** `load --mode download` re-fetches every file, including
-  the 277 MB GHS-UCDB zip (~25 min on the JRC server today); identical bytes are then
-  skipped at load.
+  the 277 MB GHS-UCDB zip (25 min on the JRC server on 2026-11-06, 90 s on 2026-11-07);
+  identical bytes are then skipped at load (`skipped (already loaded)`, with the
+  matching version id).
 - **London is excluded:** no single geoBoundaries unit for Greater London at ADM2.
 - **No migrations tool yet.** The raw DDL is `CREATE TABLE IF NOT EXISTS`, so changing an
   existing table needs a manual `ALTER` (or recreating the volume). Example: widening the

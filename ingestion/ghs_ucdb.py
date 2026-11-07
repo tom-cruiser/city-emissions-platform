@@ -93,9 +93,9 @@ def load_ghs_ucdb(conn: psycopg.Connection, fv: FileVersion) -> LoadResult:
             f"(PostGIS srid {srid}); expected {expected[0]}:{expected[1]} present in spatial_ref_sys"
         )
 
-    version_id = register_version(conn, fv, row_count=layer.feature_count)
-    if version_id is None:
-        return LoadResult(fv.source_name, fv.source_key, None, 0, skipped=True)
+    version_id, created = register_version(conn, fv, row_count=layer.feature_count)
+    if not created:
+        return LoadResult(fv.source_name, fv.source_key, version_id, 0, skipped=True)
 
     conn.execute(
         """

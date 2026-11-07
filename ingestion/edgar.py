@@ -53,9 +53,9 @@ def read_edgar_workbook(path: Path) -> tuple[str, list[dict]]:
 def load_edgar(conn: psycopg.Connection, fv: FileVersion) -> LoadResult:
     """Load one EDGAR file into raw.edgar_ucdb_emissions. Does not commit."""
     unit, records = read_edgar_workbook(fv.file_path)
-    version_id = register_version(conn, fv, row_count=len(records))
-    if version_id is None:
-        return LoadResult(fv.source_name, fv.source_key, None, 0, skipped=True)
+    version_id, created = register_version(conn, fv, row_count=len(records))
+    if not created:
+        return LoadResult(fv.source_name, fv.source_key, version_id, 0, skipped=True)
 
     # COPY streams all rows in one round trip: far faster than row-by-row INSERTs.
     with conn.cursor() as cur, cur.copy(

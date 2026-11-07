@@ -14,6 +14,8 @@ def test_sample_load_is_idempotent(db_conn):
 
     second = run_sample(db_conn, ALL_SOURCES)
     assert all(r.skipped for r in second)  # same bytes -> no new dataset versions
+    # A skip reports the version it matched, not None.
+    assert [r.dataset_version_id for r in second] == [r.dataset_version_id for r in first]
 
 
 def test_every_raw_row_traces_to_a_dataset_version(db_conn):

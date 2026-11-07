@@ -42,9 +42,11 @@ def repo_relative(path: Path) -> str:
     return str(path.relative_to(REPO_ROOT)) if path.is_relative_to(REPO_ROOT) else str(path)
 
 
-def register_version(conn: psycopg.Connection, fv: FileVersion, row_count: int) -> int | None:
-    """Insert the dataset version. Returns its id, or None if this file is already loaded.
+def register_version(conn: psycopg.Connection, fv: FileVersion, row_count: int) -> tuple[int, bool]:
+    """Insert the dataset version. Returns (dataset_version_id, created).
 
+    created is False when this exact file is already loaded; the id is then the existing
+    version's, so a skipped re-run can still say which version it matched.
     ON CONFLICT DO NOTHING on (source_name, source_key, file_sha256) makes re-runs no-ops
     and is safe if two loads race: the second waits on the unique index, then does nothing.
     """
@@ -71,4 +73,11 @@ def register_version(conn: psycopg.Connection, fv: FileVersion, row_count: int) 
             row_count,
         ),
     ).fetchone()
-    return row[0] if row else None
+    if row:
+        return row[0], True
+    existing = conn.execute(
+        "SELECT dataset_version_id FROM raw.dataset_versions"
+        " WHERE source_name = %s AND source_key = %s AND file_sha256 = %s",
+        (fv.source_name, fv.source_key, fv.sha256),
+    ).fetchone()
+    return existing[0], False

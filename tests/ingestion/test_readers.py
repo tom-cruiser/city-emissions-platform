@@ -18,6 +18,12 @@ def test_crosswalk_keys_are_unique():
     assert len({r["gb_shape_id"] for r in rows}) == len(rows)
 
 
+def test_crosswalk_every_city_has_a_note_and_review_status():
+    for r in read_crosswalk():
+        assert r["match_note"].strip(), r["city_id"]
+        assert r["review_status"] in {"accepted", "needs_review"}, r["city_id"]
+
+
 def test_boundary_files_are_one_per_country_and_level():
     files = boundary_files_needed()
     assert ("RWA", "ADM1") in files and ("UGA", "ADM2") in files
