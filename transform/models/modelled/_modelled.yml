@@ -1,0 +1,84 @@
+version: 2
+
+models:
+  - name: dim_city
+    description: >
+      Grain: one row per crosswalk city. The matched urban centre and administrative
+      boundary, the match's review_status and note, and the boundary's geodesic area
+      against the official area where sourced. needs_review cities are included, flagged.
+    data_tests:
+      - row_count_matches:
+          arguments: {compare_model: ref('city_crosswalk')}
+      - expression_is_true:
+          description: geoBoundaries has not renamed (or re-IDed) a matched shape.
+          arguments: {expression: "gb_shape_name = gb_shape_name_source"}
+      - expression_is_true:
+          description: No crosswalk city has a name with characters lost upstream.
+          arguments: {expression: "not edgar_name_lossy"}
+    columns:
+      - name: city_id
+        data_tests: [unique, not_null]
+      - name: uc_id
+        data_tests: [unique, not_null]
+      - name: review_status
+        data_tests: [not_null]
+      - name: admin_area_km2
+        description: Geodesic area (PostGIS geography, WGS84 ellipsoid) of the geoBoundaries polygon.
+      - name: admin_area_vs_official
+        description: admin_area_km2 / official_area_km2 - 1. Null where no official area is sourced yet.
+        data_tests:
+          - expression_is_true:
+              config: {severity: warn}
+              description: >
+                The geoBoundaries polygon is within admin_area_tolerance of the official area.
+                Warns, does not fail: a wrong polygon is a data finding to review, not a broken build.
+              arguments: {expression: "admin_area_vs_official is null or abs(admin_area_vs_official) <= {{ var('admin_area_tolerance') }}"}
+
+  - name: fct_urban_centre_emissions
+    description: >
+      Grain: one row per EDGAR urban centre x pollutant x EDGAR sector x year, current EDGAR
+      version only. Every urban centre in the file. Values in tonnes per year as published;
+      unit per pollutant. GPC columns are GPC-ALIGNED labels (ADR 0002), not a GPC inventory.
+    data_tests:
+      - unique_combination:
+          arguments: {columns: [uc_id, pollutant_code, edgar_sector, year]}
+    columns:
+      - name: dataset_version_id
+        data_tests:
+          - not_null
+          - distinct_count:
+              arguments: {expected: 1}
+      - name: pollutant
+        description: Null if EDGAR adds a pollutant not in the edgar_pollutants seed.
+        data_tests: [not_null]
+      - name: gpc_sector_code
+        description: Null if EDGAR adds a sector not in the edgar_sector_map seed.
+        data_tests: [not_null]
+      - name: value
+        data_tests:
+          - not_null
+          - expression_is_true:
+              arguments: {expression: "value >= 0"}
+
+  - name: fct_city_emissions
+    description: >
+      Grain: one row per crosswalk city x pollutant x EDGAR sector x year, for the CURRENT
+      EDGAR version only (dataset_version_id, one value). Emissions of the city's GHS urban
+      centre (territory_basis = ghs_urban_centre), not of its administrative boundary.
+    data_tests:
+      - unique_combination:
+          arguments: {columns: [city_id, pollutant_code, edgar_sector, year]}
+    columns:
+      - name: city_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments: {to: ref('dim_city'), field: city_id}
+      - name: dataset_version_id
+        description: The EDGAR dataset version every row comes from. Exactly one per build.
+        data_tests:
+          - not_null
+          - distinct_count:
+              arguments: {expected: 1}
+      - name: value
+        data_tests: [not_null]
