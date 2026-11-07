@@ -5,7 +5,7 @@ It ingests open emissions data and city boundaries, models them in layered
 PostgreSQL/PostGIS storage with dbt, orchestrates with Dagster, and serves curated
 data through a read-only FastAPI service.
 
-> **Status: work in progress.** Stages 1–2 are built; Stage 3 (dbt) is next.
+> **Status: work in progress.** Stages 1–3 are built; Stage 4 (reporting layer) is next.
 > See [Build status](#build-status). This README describes only what exists today and
 > marks everything planned as such.
 
@@ -15,7 +15,7 @@ data through a read-only FastAPI service.
 |---|---|---|
 | 1 | Repo structure, Docker Compose, PostGIS, schemas and roles | ✅ Done |
 | 2 | Source verification, Python ingestion into `raw`, dataset versioning, load checks | ✅ Done |
-| 3 | dbt: modelled layer, seeds, tests | ⏳ Planned |
+| 3 | dbt: modelled layer, seeds, tests | ✅ Done |
 | 4 | Reporting layer and dbt snapshots | ⏳ Planned |
 | 5 | Dagster orchestration | ⏳ Planned |
 | 6 | FastAPI service and tests | ⏳ Planned |
@@ -33,6 +33,18 @@ data through a read-only FastAPI service.
    are loaded into `raw` with load checks. See [GHS-UCDB urban centres](#ghs-ucdb-urban-centres).
    The overlap with administrative boundaries is *not* computed here: it belongs to dbt
    (Stage 3), as decided in [ADR 0001](docs/adr/0001-urban-centre-overlap.md).
+
+**Stage 3 items**
+
+1. ✅ **dbt project** in `transform/`: seeds, 5 staging and 4 modelled models, 79 tests. See
+   [Modelled layer (dbt)](#modelled-layer-dbt).
+2. ✅ **Overlap model** `city_territory_overlap` (ADR 0001): ratios in Mollweide, km² geodesic,
+   `low_urban_overlap` at `var('min_urban_overlap')` = 0.5, warn test at 0.01 for suspected
+   crosswalk errors.
+3. ✅ **Provisional EDGAR → GPC sector mapping**, [ADR 0002](docs/adr/0002-edgar-to-gpc-sector-mapping.md),
+   pending specialist review. Sectors are called *GPC-aligned*, never a *GPC inventory*.
+4. ✅ **Guard**: sample/synthetic data is refused by any database not named `*_test`, in
+   ingestion and in dbt.
 
 ## Architecture (current)
 
@@ -58,7 +70,8 @@ flowchart LR
     U --> D
     D --> L --> R
     X -. which boundary files .-> D
-    R -. Stage 3: dbt .-> M -. Stage 4 .-> P
+    R -- dbt staging --> M -. Stage 4 .-> P
+    X -- dbt seed --> M
     P -. Stage 6: read-only .-> API[FastAPI]
 ```
 
@@ -69,7 +82,7 @@ Dotted lines are planned.
 | Schema | Contents | Written by | Read by |
 |---|---|---|---|
 | `raw` | Source data exactly as loaded, plus `dataset_versions`. Append-only. | `pipeline` role | `pipeline` |
-| `modelled` | Cleaned, typed, conformed data (planned, dbt) | `pipeline` | `pipeline` |
+| `modelled` | dbt seeds, `stg_*` staging models, and the modelled layer (dims, facts, overlap) | `pipeline` | `pipeline` |
 | `reporting` | Aggregates the API serves (planned, dbt) | `pipeline` | `pipeline`, **`api_reader`** |
 
 The database enforces "the API never reads raw": `api_reader` has `SELECT` on
@@ -136,7 +149,13 @@ uv sync                              # Python 3.12 environment from uv.lock
 uv run python -m ingestion load --mode download                # real files into warehouse (~25 MB EDGAR, ~70 MB boundaries, 277 MB GHS-UCDB)
 uv run python -m ingestion load --mode sample --target test    # offline: synthetic EDGAR + real extracts into warehouse_test
 uv run pytest -q                                               # runs against warehouse_test only
+
+# dbt (Stage 3). --env-file passes .env to dbt; profiles.yml holds no secrets.
+uv run --env-file .env dbt build --project-dir transform --profiles-dir transform               # warehouse (download data)
+uv run --env-file .env dbt build --project-dir transform --profiles-dir transform --target test # warehouse_test (sample)
 ```
+
+A full `dbt build` on the real warehouse takes about 40 s (2.24M emission rows).
 
 Re-running a load is safe: a file whose SHA-256 is already recorded is skipped.
 
@@ -190,14 +209,20 @@ ingestion/
   sample.py                 rebuilds the boundary and GHS-UCDB samples; writes manifest.json
   synthetic.py              generates the SYNTHETIC EDGAR-shaped fixture (seeded, reproducible)
   sql/raw_tables.sql        raw DDL (idempotent)
-transform/seeds/city_crosswalk.csv   the 25 cities: EDGAR id <-> geoBoundaries shape
+transform/                  dbt project (Stage 3)
+  dbt_project.yml, profiles.yml   targets: warehouse, test (warehouse_test)
+  seeds/                    city_crosswalk.csv (25 cities), edgar_sector_map.csv, edgar_pollutants.csv
+  models/staging/           stg_* : one version per source, names repaired, geometry repaired
+  models/modelled/          dim_city, fct_urban_centre_emissions, fct_city_emissions, city_territory_overlap
+  macros/                   raw_origins (guard), repair_mojibake, overlap_metrics, schema naming
+  tests/                    generic tests (no packages) + singular tests
 data/sample/                committed offline sample + manifest.json
   edgar/…_SYNTHETIC.xlsx    invented values, real structure
   geoboundaries/            real polygons for the 25 cities, unmodified
   ghs_ucdb/…_crosswalk_cities.gpkg   the 25 crosswalk urban centres, one layer (160 KB)
 data/raw/                   full downloads (git-ignored), named <sha256-prefix>_<file>
 tests/                      pytest against warehouse_test: unit + rolled-back integration tests
-transform/, orchestration/  dbt (Stage 3) and Dagster (Stage 5)
+orchestration/              Dagster (Stage 5)
 docs/adr/                   architecture / methodology decision records
 ```
 
@@ -306,7 +331,7 @@ docker compose exec db psql -U climate -d warehouse -c \
   "SELECT check_name, status, detail->>'summary' FROM raw.load_checks ORDER BY dataset_version_id, check_name"
 ```
 
-### Overlap with administrative boundaries (Stage 3, decided)
+### Overlap with administrative boundaries (built in Stage 3)
 
 Computed in dbt, not ingestion. The full decision and its reasoning are in
 [ADR 0001](docs/adr/0001-urban-centre-overlap.md).
@@ -327,7 +352,7 @@ areas of our 25 boundaries are off by **up to 0.67%** (latitude-dependent) again
 ellipsoidal `geography` areas. The error is nearly the same for both polygons of a city,
 so it cancels in the overlap share. The share computed in Mollweide differs from the
 geodesic one by at most **1.9 × 10⁻⁵** across all 25 cities (asserted in
-`tests/ingestion/test_ghs_ucdb_db.py`). Absolute boundary areas, where reported, should use
+`tests/ingestion/test_ghs_ucdb_db.py`, and on every dbt build in `city_territory_overlap`). Absolute boundary areas, where reported, should use
 `geography`.
 
 ## Testing
@@ -355,6 +380,84 @@ test still starts from an empty `raw`, and the rollback restores the sample. The
 per-file transactions nest inside it as savepoints, so nothing a test writes is ever
 committed. (An earlier version of the fixture lacked this and committed for real. On an
 idle connection, psycopg's `conn.transaction()` *is* the outermost transaction.)
+
+## Modelled layer (dbt)
+
+All models live in the `modelled` schema. The `pipeline` role owns the three layer
+schemas and cannot create others, so staging models share it, prefixed `stg_`. Every row
+carries the `dataset_version_id` of the raw file it came from.
+
+| Model | Grain (one row is…) | Built as | Why |
+|---|---|---|---|
+| seeds `city_crosswalk`, `edgar_sector_map`, `edgar_pollutants` | a city / EDGAR sector / pollutant | table | seeds |
+| `stg_raw__current_versions` | a source file: its current version | view | tiny, must reflect raw |
+| `stg_edgar__urban_centres` | an EDGAR urban centre, names repaired | view | 11.7k rows, cheap |
+| `stg_edgar__emissions` | urban centre × emission column, unpivoted from JSON | view | read once, by the fact table |
+| `stg_ghs_ucdb__urban_centres` | an urban-centre polygon, repaired, SRID 54009 | table + GiST | repairing 11k polygons is the slow step; read by tests and overlap |
+| `stg_geoboundaries__boundaries` | a boundary polygon, repaired, SRID 4326 | table + GiST | parsing and repairing ~6.7k features |
+| `dim_city` | a crosswalk city | table | carries the boundary geometry |
+| `fct_urban_centre_emissions` | urban centre × pollutant × EDGAR sector × year, **current EDGAR version only** (2.24M rows) | table | source-quality tests cover every urban centre |
+| `fct_city_emissions` | city × pollutant × EDGAR sector × year, **current EDGAR version only** (4,800 rows) | table | what later stages read |
+| `city_territory_overlap` | a crosswalk city | table | geometry operations |
+
+Nothing is incremental: a full rebuild takes ~40 s, and history comes from dataset
+versions now and dbt snapshots in Stage 4.
+
+**Which raw version is modelled.** `stg_raw__current_versions` picks, per source file,
+the most recently loaded version among the allowed origins: `download` on the warehouse,
+`sample`/`synthetic` on the test target. Asking for sample or synthetic data on a
+database not named `*_test` is a compile error (`macros/raw_origins.sql`), mirroring the
+ingestion guard.
+
+**Units.** EDGAR's declared unit must be `ton/year`, or the build fails. Values stay in
+tonnes per year as published. `unit` comes from the pollutant seed: `t CO2e/yr` (GHG,
+GWP100 AR5), `t CO2/yr`, `t/yr` (NOx, PM2.5). Pollutants are never added together:
+GHG already contains CO2 (`is_ghg_total`). EDGAR has 8 years (1975, 1990, 2000, 2005,
+2010, 2015, 2020, 2022), and nothing interpolates between them.
+
+**Encoding.** EDGAR's names are UTF-8 bytes decoded as Windows-1252. `repair_mojibake`
+maps each character back to its byte and decodes as UTF-8. That fixes all 608 distinct
+mis-encoded strings, including the five bytes Windows-1252 leaves undefined (`Ã\u0081vila` →
+`Ávila`). A correctly encoded name would make the build fail on purpose: it would mean
+EDGAR fixed its encoding and the repair must be revisited.
+
+**Sectors.** `edgar_sector_map` adds a GPC sector and `mapping_quality` (`approximate` or
+`mixed`; nothing is `direct` today) next to the EDGAR sector, which stays the primary
+label. Provisional, pending specialist review: [ADR 0002](docs/adr/0002-edgar-to-gpc-sector-mapping.md).
+
+**Geometry.** Staging applies `ST_Multi(ST_CollectionExtract(ST_MakeValid(geom), 3))` and
+keeps a `geom_was_valid` flag (22 urban centres repaired, 0 boundaries). Raw is never
+modified. A test checks that repair keeps every row.
+
+**Crosswalk.** Joined by ID only. `review_status` and `match_note` are carried into
+`dim_city`. `dim_city` compares the geodesic boundary area with `official_area_km2`
+and warns beyond `var('admin_area_tolerance')` (25%). 23 cities are within 13%; Accra
+(−72%) and Buenos Aires (+374%) warn, as expected.
+
+**Overlap** (`city_territory_overlap`, computed in `macros/overlap_metrics.sql`):
+
+| Column | Meaning |
+|---|---|
+| `uc_share_inside_admin` | area(urban centre ∩ boundary) / area(urban centre), Mollweide. **Flag basis** |
+| `admin_share_covered`, `iou` | information only, Mollweide |
+| `uc_area_km2`, `admin_area_km2`, `intersection_area_km2` | geodesic (`geography`) |
+| `low_urban_overlap` | share < `var('min_urban_overlap')` (0.5): the figure describes a substantially different territory |
+| `suspected_crosswalk_error` | share < `var('suspect_crosswalk_overlap')` (0.01): the match itself is suspect; warn test |
+| `min_urban_overlap`, `suspect_crosswalk_overlap` | the thresholds used, recorded per row |
+
+On the real data: 12 of 25 cities have `low_urban_overlap`. Only Accra (0.005) has
+`suspected_crosswalk_error`. Paris (0.074) is low but correct: département 75 is the
+city, and its urban centre is 13× larger.
+
+**Tests** (79 in total). Error severity covers: grain uniqueness, row counts against
+sources, complete series per urban centre and per city (this catches double counting such
+as the synthetic duplicate Lagos), exactly one EDGAR version in each fact table, GHG ≥ CO2,
+no negatives, an unknown pollutant or sector, `ton/year`, geometry validity/SRID, shapes
+renamed upstream, lossy names on crosswalk cities, ratios in [0, 1], and Mollweide vs
+geodesic share < 1e-4. Two singular tests run macros on fixed cases: names from EDGAR for
+`repair_mojibake`, and squares with known answers for `overlap_metrics`. **Warn** severity
+is for data findings, not broken builds: boundary area vs official (Accra, Buenos Aires)
+and the 0.01 overlap (Accra). These keep warning until the crosswalk is fixed.
 
 ## City matching (crosswalk)
 
@@ -391,9 +494,9 @@ geoBoundaries re-issued its IDs.
 
 | Finding | Where | Handling |
 |---|---|---|
-| 775 names mis-encoded (UTF-8 read as Latin-1), e.g. `SÃ£o Paulo`, `MÃ©xico` | EDGAR source file | Kept as-is in raw; repair planned in the modelled layer |
+| 775 names mis-encoded (UTF-8 read as Latin-1), e.g. `SÃ£o Paulo`, `MÃ©xico` | EDGAR source file | Kept as-is in raw; repaired in `stg_edgar__urban_centres` (cp1252 mojibake, 775 rows); 339 names lost characters to `?` upstream and cannot be repaired (none are crosswalk cities, tested) |
 | 192 duplicate (name, country) pairs | EDGAR | Join on IDs via the crosswalk |
-| No negative or blank values across 11,686 rows | EDGAR | Will become a dbt test |
+| No negative or blank values across 11,686 rows; GHG (CO2e) never below CO2 | EDGAR | dbt tests on `fct_urban_centre_emissions` (error severity) |
 | Licence text truncated inside the file ("Unl…", "compli…") | EDGAR citations sheet | Licence recorded only as far as verified |
 | Intermittent HTTP 504 | geoBoundaries (GitHub LFS) | Retries with backoff; per-file isolation |
 | Urban centre ≠ administrative area | EDGAR vs geoBoundaries | Overlap share + flag in dbt (Stage 3, [ADR 0001](docs/adr/0001-urban-centre-overlap.md)) |
@@ -463,6 +566,12 @@ fetched from a commit-pinned GitHub URL, recorded in `raw.dataset_versions.sourc
   load cross-checks the parsed header against PostGIS.
 - **Load checks stored next to the data** (`raw.load_checks`), so a warning such as
   "22 invalid polygons" is queryable lineage, not a log line that scrolls away.
+- **Staging inside `modelled`, not a fourth schema.** The pipeline role cannot create
+  schemas, and a `stg_` prefix keeps them apart.
+- **No dbt packages.** Four small generic tests in `transform/tests/generic/` instead of
+  `dbt_utils`, so CI needs no `dbt deps` (network) step.
+- **Methodology in seeds and vars, not SQL.** The sector mapping, crosswalk and thresholds
+  can be reviewed and changed without touching model code.
 - **Python 3.12 only.** dagster-dbt 0.29.28 declares `requires_python <3.14`. uv
   ignores that cap and would install on 3.14, but pip correctly refuses, so 3.14 is
   unsupported here. 3.11–3.13 all install and import cleanly.
@@ -471,17 +580,21 @@ fetched from a commit-pinned GitHub URL, recorded in `raw.dataset_versions.sourc
 
 - **Urban centre ≠ city boundary.** EDGAR measures a satellite-derived urban centre,
   while boundaries are administrative. Extents can differ greatly; Jakarta's urban
-  centre (123 Mt CO2e) extends well beyond DKI Jakarta. The overlap share and flag arrive
-  with Stage 3. Until then, do not read an emissions figure as "emissions inside this
-  boundary".
+  centre (123 Mt CO2e) extends well beyond DKI Jakarta. `city_territory_overlap` measures
+  this: 12 of 25 cities have less than half their urban centre inside the boundary. Never
+  read an emissions figure as "emissions inside this boundary".
 - **EDGAR v2024 was built on an earlier GHS-UCDB release than the polygons loaded.**
   EDGAR uses 11,686 urban-centre IDs; GHS-UCDB V1.2 (loaded here) has 11,422. For the 25
   crosswalk cities the IDs, names and countries match, but **the shapes are not verified
   identical** to those EDGAR computed emissions on. Checking would need the older
   release (another 277 MB). Overlap figures therefore describe the V1.2 polygon, which
   may differ from EDGAR's territory.
-- **geoBoundaries polygons are not checked against official areas** except for Accra
-  and Buenos Aires, both found wrong. Stage 3 adds an area check.
+- **Official areas are mostly secondary sources.** `official_area_km2` is the Ghana
+  Statistical Service figure for Accra, the city government's for Buenos Aires, and
+  Wikipedia infobox figures for the other 23. That is enough for the 25% sanity check it
+  feeds; it is not an authoritative area.
+- **Sector labels are GPC-aligned, not a GPC inventory**: scope 1 only, urban-centre
+  territory, modelled top-down, provisional mapping. See [ADR 0002](docs/adr/0002-edgar-to-gpc-sector-mapping.md).
 - **Downloads are not cached.** `load --mode download` re-fetches every file, including
   the 277 MB GHS-UCDB zip (25 min on the JRC server on 2026-11-06, 90 s on 2026-11-07);
   identical bytes are then skipped at load (`skipped (already loaded)`, with the
@@ -499,5 +612,7 @@ fetched from a commit-pinned GitHub URL, recorded in `raw.dataset_versions.sourc
 
 ## Next steps
 
-Stage 3 (dbt): staging models with geometry repair, the overlap model and
-`min_urban_overlap` flag from [ADR 0001](docs/adr/0001-urban-centre-overlap.md), and tests.
+Stage 4: reporting layer and dbt snapshots. Decided: cities with
+`review_status = needs_review` (Accra, Buenos Aires) are **included** in reporting with
+their flags (`review_status`, `low_urban_overlap`, `suspected_crosswalk_error`), not left out.
+Mixed GPC sectors are shown under their EDGAR name (ADR 0002).

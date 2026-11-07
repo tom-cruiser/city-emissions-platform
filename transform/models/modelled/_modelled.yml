@@ -82,3 +82,50 @@ models:
               arguments: {expected: 1}
       - name: value
         data_tests: [not_null]
+
+  - name: city_territory_overlap
+    description: >
+      Grain: one row per crosswalk city. Overlap between the city's GHS urban centre (the
+      territory of its EDGAR emissions) and its administrative boundary. Ratios in World
+      Mollweide; km2 geodesic. Flags use the thresholds recorded on each row.
+      needs_review cities are included with their flags. See ADR 0001.
+    data_tests:
+      - row_count_matches:
+          arguments: {compare_model: ref('dim_city')}
+      - expression_is_true:
+          description: Ratios are shares (float tolerance 1e-9).
+          arguments:
+            expression: >
+              uc_share_inside_admin between 0 and 1 + 1e-9
+              and admin_share_covered between 0 and 1 + 1e-9
+              and iou between 0 and least(uc_share_inside_admin, admin_share_covered) + 1e-9
+      - expression_is_true:
+          description: >
+            The Mollweide ratio agrees with the geodesic one. Measured gap is at most 1.9e-5
+            across the 25 cities (ADR 0001); 1e-4 leaves margin without hiding a CRS error.
+          arguments: {expression: "abs(uc_share_inside_admin - uc_share_inside_admin_geodesic) < 1e-4"}
+    columns:
+      - name: city_id
+        data_tests:
+          - unique
+          - not_null
+          - relationships:
+              arguments: {to: ref('dim_city'), field: city_id}
+      - name: uc_share_inside_admin
+        description: area(urban centre ∩ boundary) / area(urban centre), Mollweide. Flag basis.
+        data_tests: [not_null]
+      - name: admin_share_covered
+        description: area(urban centre ∩ boundary) / area(boundary), Mollweide. Information only.
+      - name: iou
+        description: area(intersection) / area(union), Mollweide. Information only.
+      - name: low_urban_overlap
+        description: uc_share_inside_admin < min_urban_overlap. Provisional methodology threshold (ADR 0001).
+        data_tests: [not_null]
+      - name: suspected_crosswalk_error
+        description: uc_share_inside_admin < suspect_crosswalk_overlap. The crosswalk match itself is suspect.
+        data_tests:
+          - not_null
+          - expression_is_true:
+              config: {severity: warn}
+              description: Warns per city whose urban centre barely touches its boundary. Keeps warning until fixed.
+              arguments: {expression: "not suspected_crosswalk_error"}

@@ -1,7 +1,9 @@
 # ADR 0001: Urban-centre vs administrative-boundary overlap
 
-- **Status:** Accepted for implementation in Stage 3. The threshold value is a
-  **provisional methodology decision that domain specialists should review**.
+- **Status:** Accepted; **implemented in Stage 3** (2026-11-07) as
+  `transform/models/modelled/city_territory_overlap.sql` with `macros/overlap_metrics.sql`.
+  The threshold value is a **provisional methodology decision that domain specialists
+  should review**.
 - **Date:** 2026-11-06
 
 ## Context
@@ -40,6 +42,12 @@ describes a substantially different territory from the boundary shown next to it
 5. **Flag.** `low_urban_overlap = uc_share_inside_admin < var('min_urban_overlap')`,
    default **0.5**: less than half of the territory EDGAR measured lies inside the boundary
    we label it with. The flag is published with the figure and does not rescale it.
+6. **Suspected crosswalk error** (added in the Stage 3 plan).
+   `suspected_crosswalk_error = uc_share_inside_admin < var('suspect_crosswalk_overlap')`,
+   default **0.01**. Below 1% the urban centre barely touches its boundary, which points
+   to a wrong match or a wrong polygon rather than a territorial difference. A
+   warn-severity test reports it on every build until fixed. On the 2026-11-07 data only
+   Accra (0.005) triggers it. Paris (0.074) shows that a low share alone is not an error.
 
 ## Why `uc_share_inside_admin`, not IoU
 
