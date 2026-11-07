@@ -133,15 +133,21 @@ cp .env.example .env                 # then change the passwords
 docker compose up -d --wait          # PostGIS on 127.0.0.1:5434 (warehouse + warehouse_test)
 uv sync                              # Python 3.12 environment from uv.lock
 
-uv run python -m ingestion load --mode sample     # offline: synthetic EDGAR + real boundary and urban-centre extracts
-uv run python -m ingestion load --mode download   # real files (~25 MB EDGAR, ~70 MB boundaries, 277 MB GHS-UCDB)
-uv run pytest -q                                  # runs against warehouse_test only
+uv run python -m ingestion load --mode download                # real files into warehouse (~25 MB EDGAR, ~70 MB boundaries, 277 MB GHS-UCDB)
+uv run python -m ingestion load --mode sample --target test    # offline: synthetic EDGAR + real extracts into warehouse_test
+uv run pytest -q                                               # runs against warehouse_test only
 ```
 
 Re-running a load is safe: a file whose SHA-256 is already recorded is skipped.
 
-> **Sample mode loads synthetic emissions.** Use it to try the pipeline offline. Any
-> emissions number it produces is invented. Use `--mode download` for real data.
+> **Sample mode loads synthetic emissions, so it only loads into `warehouse_test`.** Any
+> emissions number it produces is invented. Sample and synthetic data are refused by any
+> database whose name does not end in `_test`: `load --mode sample` without
+> `--target test` exits with an error before writing anything. The check runs on the
+> database the connection actually reached, at the start of the sample run and again in
+> `register_version`, which every loader goes through (`tests/ingestion/test_test_db_guard.py`).
+> It exists because on 2026-11-07 a sample load reached the real warehouse by mistake;
+> that was removed with [`db/corrections/2026-11-07_remove_sample_versions_from_warehouse.sql`](db/corrections/2026-11-07_remove_sample_versions_from_warehouse.sql).
 
 **Created your volume before `warehouse_test` existed?** The init scripts only run on an
 empty volume. Add it without losing data:
@@ -169,8 +175,9 @@ db/init/
   01-init.sh                warehouse: roles pipeline + api_reader (runs once on an empty volume)
   02-test-db.sh             warehouse_test: roles test_pipeline + test_api_reader (idempotent)
   lib/layers.sql            shared: PostGIS, schemas, CONNECT/USAGE/SELECT grants
+db/corrections/             one-off, documented data corrections (each says what, why, how to run)
 ingestion/
-  __main__.py               CLI: load --mode sample|download, make-sample, make-synthetic
+  __main__.py               CLI: load --mode download|sample [--target warehouse|test], make-sample, make-synthetic
   config.py                 source URLs, paths, DB settings (.env)
   download.py               streaming download, SHA-256, retries with backoff
   versioning.py             raw.dataset_versions: idempotent registration
@@ -342,9 +349,11 @@ Tests can never touch the real warehouse. There are three independent layers:
    the test values, so code under test that builds its own connection also lands on
    `warehouse_test`.
 
-Each DB test also runs inside `conn.transaction(force_rollback=True)`. The pipeline's own
-per-file transactions nest inside it as savepoints, so every test starts from an empty
-database. (An earlier version of the fixture lacked this and committed for real. On an
+Each DB test also runs inside `conn.transaction(force_rollback=True)`, and first
+truncates `raw` inside it. `warehouse_test` keeps a committed sample load for dbt; each
+test still starts from an empty `raw`, and the rollback restores the sample. The pipeline's own
+per-file transactions nest inside it as savepoints, so nothing a test writes is ever
+committed. (An earlier version of the fixture lacked this and committed for real. On an
 idle connection, psycopg's `conn.transaction()` *is* the outermost transaction.)
 
 ## City matching (crosswalk)

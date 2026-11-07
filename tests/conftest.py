@@ -78,6 +78,10 @@ def db_conn():
     # `conn.transaction()` blocks nest inside it as savepoints, so they cannot commit.
     try:
         with conn.transaction(force_rollback=True):
+            # warehouse_test may hold a committed sample load (dbt builds on it). Empty raw
+            # for this test only: TRUNCATE is transactional, so the rollback restores it.
+            if conn.execute("SELECT to_regclass('raw.dataset_versions')").fetchone()[0]:
+                conn.execute("TRUNCATE raw.dataset_versions CASCADE")
             yield conn
     finally:
         conn.close()

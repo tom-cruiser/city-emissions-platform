@@ -36,6 +36,26 @@ class LoadResult:
     warnings: tuple[str, ...] = ()  # load checks that passed with a warning (raw.load_checks)
 
 
+class NotATestDatabaseError(RuntimeError):
+    """Raised when sample or synthetic data would be loaded outside a *_test database."""
+
+
+def require_test_database(conn: psycopg.Connection, what: str) -> None:
+    """Refuse to continue unless `conn` is connected to a database whose name ends in "_test".
+
+    Sample and synthetic data must never reach the real warehouse: the synthetic EDGAR
+    fixture holds invented emissions. The check uses the database the connection actually
+    reached, not a configured name, and accepts only the "_test" naming convention that
+    tests already rely on (tests/conftest.py), so a renamed warehouse is refused too.
+    """
+    dbname = conn.info.dbname
+    if not dbname.endswith("_test"):
+        raise NotATestDatabaseError(
+            f"refusing to load {what} into database {dbname!r}: sample and synthetic data may only be "
+            "loaded into a *_test database (use --target test)"
+        )
+
+
 def repo_relative(path: Path) -> str:
     """Store paths relative to the repo so they mean the same on the host and in containers."""
     path = path.resolve()
@@ -49,7 +69,11 @@ def register_version(conn: psycopg.Connection, fv: FileVersion, row_count: int) 
     version's, so a skipped re-run can still say which version it matched.
     ON CONFLICT DO NOTHING on (source_name, source_key, file_sha256) makes re-runs no-ops
     and is safe if two loads race: the second waits on the unique index, then does nothing.
+    Every loader registers through here, so this is also where non-download data is
+    stopped from reaching a real database.
     """
+    if fv.origin != "download":
+        require_test_database(conn, f"{fv.origin} data ({fv.source_name} {fv.source_key})")
     row = conn.execute(
         """
         INSERT INTO raw.dataset_versions

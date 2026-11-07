@@ -62,10 +62,20 @@ class Settings(BaseSettings):
     postgres_db: str = "warehouse"
     pipeline_user: str = "pipeline"
     pipeline_password: str = ""
+    test_postgres_db: str = "warehouse_test"
+    test_pipeline_user: str = "test_pipeline"
+    test_pipeline_password: str = ""
 
     @property
     def pipeline_dsn(self) -> str:
-        return (
-            f"host={self.pghost} port={self.postgres_port} dbname={self.postgres_db} "
-            f"user={self.pipeline_user} password={self.pipeline_password}"
-        )
+        return self.dsn("warehouse")
+
+    def dsn(self, target: str) -> str:
+        """Connection string for a target: 'warehouse' (the real one) or 'test' (warehouse_test)."""
+        if target == "test":
+            db, user, password = self.test_postgres_db, self.test_pipeline_user, self.test_pipeline_password
+        elif target == "warehouse":
+            db, user, password = self.postgres_db, self.pipeline_user, self.pipeline_password
+        else:
+            raise ValueError(f"unknown target {target!r}")
+        return f"host={self.pghost} port={self.postgres_port} dbname={db} user={user} password={password}"

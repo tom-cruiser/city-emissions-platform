@@ -20,7 +20,7 @@ from ingestion.download import download, sha256_file
 from ingestion.edgar import load_edgar
 from ingestion.geoboundaries import load_geoboundaries, resolve_boundary_file
 from ingestion.ghs_ucdb import LoadCheckError, load_ghs_ucdb
-from ingestion.versioning import FileVersion, LoadResult
+from ingestion.versioning import FileVersion, LoadResult, require_test_database
 
 LOADERS = {
     config.EDGAR_SOURCE_NAME: load_edgar,
@@ -90,7 +90,11 @@ def run_download(conn: psycopg.Connection, sources: list[str]) -> list[LoadResul
 
 
 def run_sample(conn: psycopg.Connection, sources: list[str]) -> list[LoadResult]:
-    """Load the committed sample. Works offline: used by CI and the first `docker compose up`."""
+    """Load the committed sample into a *_test database. Works offline: used by tests and CI.
+
+    Refuses any other database before writing anything (see require_test_database).
+    """
+    require_test_database(conn, "the sample")
     with conn.transaction():
         ensure_raw_tables(conn)
     manifest = json.loads(config.SAMPLE_MANIFEST.read_text(encoding="utf-8"))
