@@ -1,0 +1,74 @@
+version: 2
+
+models:
+  - name: stg_raw__current_versions
+    description: >
+      Grain: one row per source file (source_name, source_key) - the dataset version it is
+      currently modelled from. Only origins allowed on this target (download on the
+      warehouse; sample/synthetic on test). View: tiny, and must always reflect raw.
+    data_tests:
+      - unique_combination:
+          arguments: {columns: [source_name, source_key]}
+    columns:
+      - name: dataset_version_id
+        data_tests: [unique, not_null]
+
+  - name: stg_edgar__urban_centres
+    description: >
+      Grain: one row per EDGAR urban centre in the current EDGAR version. Names repaired
+      from double encoding; source text kept. View: 11.7k rows, cheap.
+    columns:
+      - name: uc_id
+        data_tests: [unique, not_null]
+      - name: uc_name
+        data_tests:
+          - not_null
+          - expression_is_true:
+              config: {error_if: ">0"}
+              arguments: {expression: "uc_name !~ {{ mojibake_pattern() }} and country_name !~ {{ mojibake_pattern() }} and uc_name !~ '[\\u0080-\\u009f]'"}
+      - name: name_lossy
+        description: The source name contains '?' where characters were lost upstream. Unrecoverable.
+
+  - name: stg_edgar__emissions
+    description: >
+      Grain: one row per EDGAR urban centre x emission column (pollutant x sector x year),
+      current EDGAR version, unpivoted from JSON. View: read once, by
+      fct_urban_centre_emissions, where the heavier tests run on the materialised table.
+    columns:
+      - name: source_unit
+        description: Unit declared by the source. If EDGAR ever changes it, the build must stop.
+        data_tests:
+          - accepted_values:
+              arguments: {values: ['ton/year']}
+      - name: pollutant_code
+        description: Null when an EMI_ column does not match EMI_<pollutant>_<sector>_<year>.
+        data_tests: [not_null]
+
+  - name: stg_ghs_ucdb__urban_centres
+    description: >
+      Grain: one row per GHS-UCDB urban centre in the current version. Geometry repaired
+      (ST_MakeValid, polygonal part, MultiPolygon), SRID 54009. Table: see the model.
+    columns:
+      - name: uc_id
+        data_tests: [unique, not_null]
+      - name: geom
+        data_tests:
+          - not_null
+          - expression_is_true:
+              arguments: {expression: "st_isvalid(geom) and not st_isempty(geom) and st_srid(geom) = 54009"}
+
+  - name: stg_geoboundaries__boundaries
+    description: >
+      Grain: one row per geoBoundaries feature in the current version of each country file.
+      Geometry repaired, SRID 4326. Table: see the model.
+    data_tests:
+      - expression_is_true:
+          arguments: {expression: "shape_group = country_iso3 and shape_type = adm_level"}
+    columns:
+      - name: shape_id
+        data_tests: [unique, not_null]
+      - name: geom
+        data_tests:
+          - not_null
+          - expression_is_true:
+              arguments: {expression: "st_isvalid(geom) and not st_isempty(geom) and st_srid(geom) = 4326"}

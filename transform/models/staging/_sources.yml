@@ -1,0 +1,17 @@
+version: 2
+
+sources:
+  - name: raw
+    description: Source data exactly as loaded by ingestion/. Append-only. Never read by the API.
+    schema: raw
+    tables:
+      - name: dataset_versions
+        description: One row per loaded source file, identified by SHA-256. origin = download | sample | synthetic.
+      - name: edgar_ucdb_emissions
+        description: EDGAR v2024 emissions per GHS urban centre, one JSON record per sheet row.
+      - name: geoboundaries_features
+        description: geoBoundaries features as GeoJSON (WGS84).
+      - name: ghs_ucdb_urban_centres
+        description: GHS-UCDB R2024A urban-centre polygons, native CRS ESRI:54009, not repaired.
+      - name: load_checks
+        description: Load-time checks per dataset version (pass | warn).

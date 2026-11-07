@@ -1,0 +1,5 @@
+pollutant_code,pollutant,unit,is_greenhouse_gas,is_ghg_total,note
+GWP_100_AR5_GHG,GHG,t CO2e/yr,true,true,"Total greenhouse gases as CO2-equivalent, GWP100 from IPCC AR5 (from the column name). Which gases it includes is not stated in the file."
+CO2,CO2,t CO2/yr,true,false,"Carbon dioxide. Already included in GHG: never add the two."
+NOx,NOx,t/yr,false,false,"Air pollutant, not a greenhouse gas. The file does not state whether the mass is expressed as NO2."
+PM2.5,PM2.5,t/yr,false,false,"Air pollutant (fine particulate matter), not a greenhouse gas."

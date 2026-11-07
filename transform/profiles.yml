@@ -1,0 +1,24 @@
+# No secrets here: everything comes from the environment (the repo's .env).
+# Run with: uv run --env-file .env dbt <command> --project-dir transform --profiles-dir transform
+city_emissions:
+  target: warehouse
+  outputs:
+    warehouse:
+      type: postgres
+      host: "{{ env_var('PGHOST', 'localhost') }}"
+      port: "{{ env_var('POSTGRES_PORT', '5434') | int }}"
+      dbname: "{{ env_var('POSTGRES_DB') }}"
+      user: "{{ env_var('PIPELINE_USER') }}"
+      password: "{{ env_var('PIPELINE_PASSWORD') }}"
+      schema: modelled
+      threads: 4
+    # warehouse_test, as the test roles. Holds the committed offline sample.
+    test:
+      type: postgres
+      host: "{{ env_var('PGHOST', 'localhost') }}"
+      port: "{{ env_var('POSTGRES_PORT', '5434') | int }}"
+      dbname: "{{ env_var('TEST_POSTGRES_DB') }}"
+      user: "{{ env_var('TEST_PIPELINE_USER') }}"
+      password: "{{ env_var('TEST_PIPELINE_PASSWORD') }}"
+      schema: modelled
+      threads: 4

@@ -1,0 +1,7 @@
+edgar_sector,gpc_sector_code,gpc_sector,mapping_quality,review_status,note
+Energy,I,Stationary energy,approximate,needs_review,"Assumed to be energy industries (GPC I.4: power and heat generation). GPC reports grid-energy generation inside the boundary but excludes it from the BASIC total to avoid double counting with scope 2; EDGAR gives no way to separate it."
+Industry,I+IV,Stationary energy + Industrial processes and product use,mixed,needs_review,"Assumed to combine fuel combustion in manufacturing (GPC I.3) with industrial process emissions (GPC IV). EDGAR's aggregate cannot be split between the two."
+Residential,I,Stationary energy,approximate,needs_review,"Assumed to be fuel combustion in buildings (GPC I.1 residential; whether I.2 commercial/institutional is included is not verified). Electricity use (scope 2) is not in EDGAR."
+Transport,II,Transportation,approximate,needs_review,"Whether aviation and waterborne navigation are included, and how they are allocated to urban centres, is not verified."
+Agriculture,V,"Agriculture, forestry and other land use",approximate,needs_review,"Agriculture only: GPC AFOLU also covers land use and forestry, which this EDGAR dataset does not provide."
+Waste,III,Waste,approximate,needs_review,"Assumed to cover solid waste and wastewater. GPC counts incineration with energy recovery under Stationary energy; EDGAR cannot separate it."

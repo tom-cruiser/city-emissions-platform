@@ -1,0 +1,78 @@
+version: 2
+
+seeds:
+  - name: city_crosswalk
+    description: >
+      The 25 cities the platform covers. Maps each city to an EDGAR / GHS-UCDB urban-centre
+      ID and a geoBoundaries shape. Joined by ID only, never by name. Also read by ingestion
+      to decide which boundary files to fetch.
+    config:
+      column_types:
+        edgar_uc_id: integer
+        official_area_km2: numeric
+    columns:
+      - name: city_id
+        data_tests: [unique, not_null]
+      - name: edgar_uc_id
+        description: GHS urban-centre ID (ID_UC_G0), the same in EDGAR and GHS-UCDB.
+        data_tests:
+          - unique
+          - not_null
+          - relationships:
+              arguments: {to: ref('stg_edgar__urban_centres'), field: uc_id}
+          - relationships:
+              arguments: {to: ref('stg_ghs_ucdb__urban_centres'), field: uc_id}
+      - name: gb_shape_id
+        data_tests:
+          - unique
+          - not_null
+          - relationships:
+              arguments: {to: ref('stg_geoboundaries__boundaries'), field: shape_id}
+      - name: match_note
+        description: Why this unit was chosen and anything known to be wrong with it.
+        data_tests: [not_null]
+      - name: review_status
+        description: "accepted: unit choice documented, no known problem. needs_review: a known problem a person must resolve."
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments: {values: [accepted, needs_review]}
+      - name: official_area_km2
+        description: Official area of the administrative unit, where sourced. Compared with the geoBoundaries polygon in dim_city.
+        data_tests:
+          - expression_is_true:
+              arguments: {expression: "official_area_km2 is null or (official_area_km2 > 0 and official_area_source is not null)"}
+
+  - name: edgar_sector_map
+    description: >
+      EDGAR sector -> GPC sector. PROVISIONAL, pending review by a city GHG inventory
+      specialist: see docs/adr/0002-edgar-to-gpc-sector-mapping.md.
+    columns:
+      - name: edgar_sector
+        data_tests: [unique, not_null]
+      - name: gpc_sector_code
+        data_tests: [not_null]
+      - name: mapping_quality
+        description: "direct: within one GPC sector, boundaries align. approximate: within one GPC sector, known or unverified boundary differences. mixed: spans GPC sectors and cannot be split."
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments: {values: [direct, approximate, mixed]}
+      - name: review_status
+        data_tests:
+          - accepted_values:
+              arguments: {values: [accepted, needs_review]}
+
+  - name: edgar_pollutants
+    description: The four EDGAR pollutant codes, their units, and whether they are greenhouse gases.
+    columns:
+      - name: pollutant_code
+        description: As in the EDGAR column name EMI_<pollutant_code>_<sector>_<year>.
+        data_tests: [unique, not_null]
+      - name: unit
+        data_tests: [not_null]
+      - name: is_ghg_total
+        description: True only for the GHG total in CO2e. CO2 is part of it and must never be added to it.
+        data_tests:
+          - accepted_values:
+              arguments: {values: [true, false], quote: false}

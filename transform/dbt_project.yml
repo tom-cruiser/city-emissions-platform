@@ -1,0 +1,38 @@
+# dbt project for the modelled (and, from Stage 4, reporting) layers.
+# Run from the repo root:  uv run --env-file .env dbt build --project-dir transform --profiles-dir transform [--target test]
+name: city_emissions
+version: "1.0.0"
+config-version: 2
+profile: city_emissions
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+test-paths: ["tests"]
+clean-targets: ["target", "dbt_packages"]
+
+flags:
+  send_anonymous_usage_stats: false
+
+vars:
+  # Methodology thresholds (ADR 0001). Change with --vars, never in model code.
+  min_urban_overlap: 0.5           # low_urban_overlap when < this share of the urban centre is inside the boundary
+  suspect_crosswalk_overlap: 0.01  # below this the crosswalk itself is suspect (warn test)
+  admin_area_tolerance: 0.25       # warn when a boundary's area differs from the official one by more than this
+  # raw_origins: which raw.dataset_versions.origin values staging reads. Default depends on
+  # the target (macros/raw_origins.sql): ['download'] for warehouse, ['sample','synthetic'] for test.
+
+models:
+  city_emissions:
+    # Staging and modelled share the `modelled` schema: the pipeline role owns the three
+    # layer schemas and cannot create new ones. Staging models are prefixed stg_.
+    +schema: modelled
+    staging:
+      +materialized: view
+    modelled:
+      +materialized: table
+
+seeds:
+  city_emissions:
+    +schema: modelled
+    +quote_columns: false
