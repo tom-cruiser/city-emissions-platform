@@ -6,6 +6,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
+from pydantic import StringConstraints
 from sqlalchemy import Connection, Engine
 
 from api import queries as q
@@ -36,6 +37,9 @@ def get_engine():  # replaced in main.create_app; declared here so routes can de
 
 
 EngineDep = Annotated[Engine, Depends(get_engine)]
+# The pattern must sit on the item type: on a list-valued Query it would be applied to the
+# list itself (and crash with a 500 instead of answering 422).
+Iso3 = Annotated[str, StringConstraints(pattern=r"^[A-Z]{3}$")]
 
 
 def _context(row: Mapping[str, Any]) -> dict[str, Any]:
@@ -64,7 +68,7 @@ class GeoJSONResponse(JSONResponse):
 def list_cities(
     engine: EngineDep,
     page: PaginationDep,
-    country: Annotated[list[str] | None, Query(pattern=r"^[A-Z]{3}$", description="ISO 3166-1 alpha-3; repeatable.")] = None,
+    country: Annotated[list[Iso3] | None, Query(description="ISO 3166-1 alpha-3; repeatable.")] = None,
     review_status: Annotated[ReviewStatus | None, Query(description="Crosswalk review status.")] = None,
     flag: Annotated[list[Flag] | None, Query(description="Only cities with ALL these flags set; repeatable.")] = None,
 ):

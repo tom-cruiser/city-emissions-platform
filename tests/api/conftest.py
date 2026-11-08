@@ -59,3 +59,10 @@ def reporting_built(api_settings):
 def client(api_settings, reporting_built):
     with TestClient(create_app(api_settings)) as c:
         yield c
+
+
+@pytest.fixture
+def reader_db(reporting_built):
+    """A direct connection as the test reader, to compare API output with the tables."""
+    with psycopg.connect(TEST_DB.reader_dsn, connect_timeout=3) as conn:
+        yield conn

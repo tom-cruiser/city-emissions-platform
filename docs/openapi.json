@@ -1,0 +1,2017 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "City emissions API",
+    "description": "\nRead-only access to city-level emissions, built from open data: EDGAR emissions in GHS\nurban centres, GHS-UCDB urban-centre polygons, and geoBoundaries administrative boundaries.\n\n## Read this first: urban centre ≠ city\n\nEmissions of the city's GHS **urban centre**, not of its administrative boundary. EDGAR computes emissions for satellite-derived urban centres (GHS-UCDB), whose extent can differ greatly from the city's legal territory: check `uc_share_inside_admin` and the flags.\n\nEvery response says so: `territory_basis` is always `ghs_urban_centre`, and every emissions\nvalue is named `urban_centre_emissions`. Each city-scoped response also carries a `city`\nblock with:\n\n* **`uc_share_inside_admin`**: the share of the urban centre's area inside the administrative\n  boundary. Jakarta's urban centre is only ~14% inside DKI Jakarta; Paris's département 75\n  covers a small part of a much larger urban centre.\n* **Flags**: `low_urban_overlap` (share < 0.5: the figure describes a substantially different\n  territory), `suspected_crosswalk_error` (share < 0.01: the city's match itself is probably\n  wrong), `admin_area_mismatch` (the boundary polygon's area is off the official area by more\n  than 25%). `flags` lists the ones that are set, plus `crosswalk_needs_review`.\n* **`crosswalk_review_status`**: `needs_review` means a known problem with the city's match\n  that a person still has to resolve. Such cities are included, flagged, not hidden.\n* **`versions`**: the dataset versions every figure comes from. Each id is listed at\n  `/v1/datasets/{dataset_version_id}`, with source URL, SHA-256, licence and load warnings.\n\n## Sectors are GPC-aligned, not a GPC inventory\n\nEmissions are published per **EDGAR sector**. Each carries a GPC-aligned sector label with a\n`mapping_quality` (`direct`, `approximate`, `mixed`) and its own `sector_mapping_review_status`.\nThe mapping is provisional; scope 1 only; modelled top-down. Sectors are never summed into GPC\ntotals here, and pollutants are never added together (GHG already contains CO2), which is why\nan emissions request takes exactly one pollutant.\n\n## Numbers\n\nEmissions and ratios are JSON numbers (IEEE-754 doubles, ~15 significant digits). The warehouse\nstores emissions as exact `numeric` values as published by EDGAR; the API converts them only\nwhen serialising. Units are given per response (`t CO2e/yr`, `t CO2/yr`, `t/yr`).\n\nEDGAR's years are not annual (1975, 1990, 2000, 2005, 2010, 2015, 2020, 2022). Nothing is\ninterpolated: the trend endpoint names the previous available year and an annualised rate.\n\n## Errors\n\n`404` for an unknown city or dataset version, `422` for invalid parameters (FastAPI's standard\nvalidation body), `503` when the database is unavailable. Other errors are\n`{\"detail\": ..., \"code\": ...}`.\n",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/v1/cities": {
+      "get": {
+        "tags": [
+          "cities"
+        ],
+        "summary": "List cities",
+        "operationId": "list_cities_v1_cities_get",
+        "parameters": [
+          {
+            "name": "country",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "^[A-Z]{3}$"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "ISO 3166-1 alpha-3; repeatable.",
+              "title": "Country"
+            },
+            "description": "ISO 3166-1 alpha-3; repeatable."
+          },
+          {
+            "name": "review_status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/ReviewStatus"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Crosswalk review status.",
+              "title": "Review Status"
+            },
+            "description": "Crosswalk review status."
+          },
+          {
+            "name": "flag",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Flag"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only cities with ALL these flags set; repeatable.",
+              "title": "Flag"
+            },
+            "description": "Only cities with ALL these flags set; repeatable."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "Page size, 1-100.",
+              "default": 50,
+              "title": "Limit"
+            },
+            "description": "Page size, 1-100."
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Items to skip.",
+              "default": 0,
+              "title": "Offset"
+            },
+            "description": "Items to skip."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CitiesPage"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/cities/{city_id}": {
+      "get": {
+        "tags": [
+          "cities"
+        ],
+        "summary": "One city",
+        "operationId": "get_city_v1_cities__city_id__get",
+        "parameters": [
+          {
+            "name": "city_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 64,
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+              "description": "Platform city ID, e.g. `kigali-rwa`.",
+              "examples": [
+                "kigali-rwa"
+              ],
+              "title": "City Id"
+            },
+            "description": "Platform city ID, e.g. `kigali-rwa`."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CitySummary"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown city"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/cities/{city_id}/emissions": {
+      "get": {
+        "tags": [
+          "emissions"
+        ],
+        "summary": "Urban-centre emissions by EDGAR sector and year (one pollutant)",
+        "operationId": "get_emissions_v1_cities__city_id__emissions_get",
+        "parameters": [
+          {
+            "name": "city_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 64,
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+              "description": "Platform city ID, e.g. `kigali-rwa`.",
+              "examples": [
+                "kigali-rwa"
+              ],
+              "title": "City Id"
+            },
+            "description": "Platform city ID, e.g. `kigali-rwa`."
+          },
+          {
+            "name": "pollutant",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Pollutant",
+              "description": "Exactly one: pollutants are never added together.",
+              "default": "GHG"
+            },
+            "description": "Exactly one: pollutants are never added together."
+          },
+          {
+            "name": "sector",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/EdgarSector"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "EDGAR sectors; repeatable. Default: all.",
+              "title": "Sector"
+            },
+            "description": "EDGAR sectors; repeatable. Default: all."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "Page size, 1-100.",
+              "default": 50,
+              "title": "Limit"
+            },
+            "description": "Page size, 1-100."
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Items to skip.",
+              "default": 0,
+              "title": "Offset"
+            },
+            "description": "Items to skip."
+          },
+          {
+            "name": "year_from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 2100,
+                  "minimum": 1900
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "First year, inclusive.",
+              "title": "Year From"
+            },
+            "description": "First year, inclusive."
+          },
+          {
+            "name": "year_to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 2100,
+                  "minimum": 1900
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Last year, inclusive.",
+              "title": "Year To"
+            },
+            "description": "Last year, inclusive."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmissionsPage"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown city"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/cities/{city_id}/trend": {
+      "get": {
+        "tags": [
+          "emissions"
+        ],
+        "summary": "Urban-centre emissions per year, all sectors (one pollutant)",
+        "operationId": "get_trend_v1_cities__city_id__trend_get",
+        "parameters": [
+          {
+            "name": "city_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 64,
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+              "description": "Platform city ID, e.g. `kigali-rwa`.",
+              "examples": [
+                "kigali-rwa"
+              ],
+              "title": "City Id"
+            },
+            "description": "Platform city ID, e.g. `kigali-rwa`."
+          },
+          {
+            "name": "pollutant",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Pollutant",
+              "description": "Exactly one pollutant.",
+              "default": "GHG"
+            },
+            "description": "Exactly one pollutant."
+          },
+          {
+            "name": "year_from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 2100,
+                  "minimum": 1900
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "First year, inclusive.",
+              "title": "Year From"
+            },
+            "description": "First year, inclusive."
+          },
+          {
+            "name": "year_to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 2100,
+                  "minimum": 1900
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Last year, inclusive.",
+              "title": "Year To"
+            },
+            "description": "Last year, inclusive."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrendResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown city"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/cities/{city_id}/revisions": {
+      "get": {
+        "tags": [
+          "emissions"
+        ],
+        "summary": "Changes between consecutive EDGAR versions",
+        "operationId": "get_revisions_v1_cities__city_id__revisions_get",
+        "parameters": [
+          {
+            "name": "city_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 64,
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+              "description": "Platform city ID, e.g. `kigali-rwa`.",
+              "examples": [
+                "kigali-rwa"
+              ],
+              "title": "City Id"
+            },
+            "description": "Platform city ID, e.g. `kigali-rwa`."
+          },
+          {
+            "name": "revision_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/RevisionType"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Revision Type"
+            }
+          },
+          {
+            "name": "pollutant",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/Pollutant"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Pollutant"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "Page size, 1-100.",
+              "default": 50,
+              "title": "Limit"
+            },
+            "description": "Page size, 1-100."
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Items to skip.",
+              "default": 0,
+              "title": "Offset"
+            },
+            "description": "Items to skip."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RevisionsPage"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown city"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/cities/{city_id}/overlap": {
+      "get": {
+        "tags": [
+          "geometry"
+        ],
+        "summary": "Overlap of the urban centre with the administrative boundary",
+        "operationId": "get_overlap_v1_cities__city_id__overlap_get",
+        "parameters": [
+          {
+            "name": "city_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 64,
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+              "description": "Platform city ID, e.g. `kigali-rwa`.",
+              "examples": [
+                "kigali-rwa"
+              ],
+              "title": "City Id"
+            },
+            "description": "Platform city ID, e.g. `kigali-rwa`."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OverlapResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown city"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/cities/{city_id}/boundary": {
+      "get": {
+        "tags": [
+          "geometry"
+        ],
+        "summary": "Boundary and urban centre as GeoJSON",
+        "operationId": "get_boundary_v1_cities__city_id__boundary_get",
+        "parameters": [
+          {
+            "name": "city_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 64,
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+              "description": "Platform city ID, e.g. `kigali-rwa`.",
+              "examples": [
+                "kigali-rwa"
+              ],
+              "title": "City Id"
+            },
+            "description": "Platform city ID, e.g. `kigali-rwa`."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/geo+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BoundaryFeatureCollection"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown city"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/datasets": {
+      "get": {
+        "tags": [
+          "lineage"
+        ],
+        "summary": "List dataset versions",
+        "operationId": "list_datasets_v1_datasets_get",
+        "parameters": [
+          {
+            "name": "source_name",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/SourceName"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Source Name"
+            }
+          },
+          {
+            "name": "is_current",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only current (true) or only older (false) versions.",
+              "title": "Is Current"
+            },
+            "description": "Only current (true) or only older (false) versions."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "Page size, 1-100.",
+              "default": 50,
+              "title": "Limit"
+            },
+            "description": "Page size, 1-100."
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Items to skip.",
+              "default": 0,
+              "title": "Offset"
+            },
+            "description": "Items to skip."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatasetsPage"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/datasets/{dataset_version_id}": {
+      "get": {
+        "tags": [
+          "lineage"
+        ],
+        "summary": "One dataset version",
+        "operationId": "get_dataset_v1_datasets__dataset_version_id__get",
+        "parameters": [
+          {
+            "name": "dataset_version_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "title": "Dataset Version Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatasetVersion"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown dataset version"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "tags": [
+          "operations"
+        ],
+        "summary": "Liveness: the process is up (no database call)",
+        "operationId": "health_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object",
+                  "title": "Response Health Health Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ready": {
+      "get": {
+        "tags": [
+          "operations"
+        ],
+        "summary": "Readiness: the database answers and reporting is built",
+        "operationId": "ready_ready_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "BoundaryFeatureCollection": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "FeatureCollection",
+            "title": "Type"
+          },
+          "bbox": {
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "type": "array",
+            "maxItems": 4,
+            "minItems": 4,
+            "title": "Bbox",
+            "description": "[west, south, east, north], both shapes."
+          },
+          "features": {
+            "items": {
+              "$ref": "#/components/schemas/Feature"
+            },
+            "type": "array",
+            "title": "Features"
+          },
+          "city": {
+            "$ref": "#/components/schemas/CityContext"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "type",
+          "bbox",
+          "features",
+          "city"
+        ],
+        "title": "BoundaryFeatureCollection",
+        "description": "RFC 7946 FeatureCollection; `city` is a foreign member, which RFC 7946 allows."
+      },
+      "CitiesPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CitySummary"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "Matching items across all pages."
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "CitiesPage",
+        "description": "A page of cities; each item carries its own labels, flags and versions."
+      },
+      "CityContext": {
+        "properties": {
+          "city_id": {
+            "type": "string",
+            "title": "City Id",
+            "examples": [
+              "accra-gha"
+            ]
+          },
+          "city_name": {
+            "type": "string",
+            "title": "City Name"
+          },
+          "country_iso3": {
+            "type": "string",
+            "title": "Country Iso3"
+          },
+          "territory_basis": {
+            "type": "string",
+            "const": "ghs_urban_centre",
+            "title": "Territory Basis",
+            "description": "Always `ghs_urban_centre`: Emissions of the city's GHS **urban centre**, not of its administrative boundary. EDGAR computes emissions for satellite-derived urban centres (GHS-UCDB), whose extent can differ greatly from the city's legal territory: check `uc_share_inside_admin` and the flags."
+          },
+          "uc_share_inside_admin": {
+            "type": "number",
+            "title": "Uc Share Inside Admin",
+            "description": "Share (0-1) of the urban centre's area inside the administrative boundary."
+          },
+          "low_urban_overlap": {
+            "type": "boolean",
+            "title": "Low Urban Overlap",
+            "description": "uc_share_inside_admin < 0.5: the figures describe a substantially different territory."
+          },
+          "suspected_crosswalk_error": {
+            "type": "boolean",
+            "title": "Suspected Crosswalk Error",
+            "description": "uc_share_inside_admin < 0.01: the city's match itself is probably wrong."
+          },
+          "admin_area_mismatch": {
+            "type": "boolean",
+            "title": "Admin Area Mismatch",
+            "description": "The boundary polygon's area differs from the official area by more than 25%."
+          },
+          "crosswalk_review_status": {
+            "$ref": "#/components/schemas/ReviewStatus",
+            "description": "`needs_review`: a known problem with the city's match that a person must resolve."
+          },
+          "flags": {
+            "items": {
+              "$ref": "#/components/schemas/Flag"
+            },
+            "type": "array",
+            "title": "Flags",
+            "description": "The flags that are set. Empty when none is."
+          },
+          "versions": {
+            "$ref": "#/components/schemas/Versions"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "city_id",
+          "city_name",
+          "country_iso3",
+          "territory_basis",
+          "uc_share_inside_admin",
+          "low_urban_overlap",
+          "suspected_crosswalk_error",
+          "admin_area_mismatch",
+          "crosswalk_review_status",
+          "flags",
+          "versions"
+        ],
+        "title": "CityContext",
+        "description": "Who the figures are about, on what territory, and how much to trust the match."
+      },
+      "CitySummary": {
+        "properties": {
+          "city_id": {
+            "type": "string",
+            "title": "City Id",
+            "examples": [
+              "accra-gha"
+            ]
+          },
+          "city_name": {
+            "type": "string",
+            "title": "City Name"
+          },
+          "country_iso3": {
+            "type": "string",
+            "title": "Country Iso3"
+          },
+          "territory_basis": {
+            "type": "string",
+            "const": "ghs_urban_centre",
+            "title": "Territory Basis",
+            "description": "Always `ghs_urban_centre`: Emissions of the city's GHS **urban centre**, not of its administrative boundary. EDGAR computes emissions for satellite-derived urban centres (GHS-UCDB), whose extent can differ greatly from the city's legal territory: check `uc_share_inside_admin` and the flags."
+          },
+          "uc_share_inside_admin": {
+            "type": "number",
+            "title": "Uc Share Inside Admin",
+            "description": "Share (0-1) of the urban centre's area inside the administrative boundary."
+          },
+          "low_urban_overlap": {
+            "type": "boolean",
+            "title": "Low Urban Overlap",
+            "description": "uc_share_inside_admin < 0.5: the figures describe a substantially different territory."
+          },
+          "suspected_crosswalk_error": {
+            "type": "boolean",
+            "title": "Suspected Crosswalk Error",
+            "description": "uc_share_inside_admin < 0.01: the city's match itself is probably wrong."
+          },
+          "admin_area_mismatch": {
+            "type": "boolean",
+            "title": "Admin Area Mismatch",
+            "description": "The boundary polygon's area differs from the official area by more than 25%."
+          },
+          "crosswalk_review_status": {
+            "$ref": "#/components/schemas/ReviewStatus",
+            "description": "`needs_review`: a known problem with the city's match that a person must resolve."
+          },
+          "flags": {
+            "items": {
+              "$ref": "#/components/schemas/Flag"
+            },
+            "type": "array",
+            "title": "Flags",
+            "description": "The flags that are set. Empty when none is."
+          },
+          "versions": {
+            "$ref": "#/components/schemas/Versions"
+          },
+          "uc_id": {
+            "type": "integer",
+            "title": "Uc Id",
+            "description": "GHS urban-centre ID (ID_UC_G0), the same in EDGAR and GHS-UCDB."
+          },
+          "edgar_uc_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Edgar Uc Name"
+          },
+          "gb_adm_level": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gb Adm Level"
+          },
+          "gb_shape_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gb Shape Name"
+          },
+          "match_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Match Note",
+            "description": "Why this unit was chosen and anything known to be wrong with it."
+          },
+          "first_year": {
+            "type": "integer",
+            "title": "First Year"
+          },
+          "last_year": {
+            "type": "integer",
+            "title": "Last Year"
+          },
+          "latest_urban_centre_ghg_t_co2e": {
+            "type": "number",
+            "title": "Latest Urban Centre Ghg T Co2E",
+            "description": "Total GHG (t CO2e/yr, GWP100 AR5) in last_year, all EDGAR sectors. Emissions of the city's GHS **urban centre**, not of its administrative boundary. EDGAR computes emissions for satellite-derived urban centres (GHS-UCDB), whose extent can differ greatly from the city's legal territory: check `uc_share_inside_admin` and the flags."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "city_id",
+          "city_name",
+          "country_iso3",
+          "territory_basis",
+          "uc_share_inside_admin",
+          "low_urban_overlap",
+          "suspected_crosswalk_error",
+          "admin_area_mismatch",
+          "crosswalk_review_status",
+          "flags",
+          "versions",
+          "uc_id",
+          "edgar_uc_name",
+          "gb_adm_level",
+          "gb_shape_name",
+          "match_note",
+          "first_year",
+          "last_year",
+          "latest_urban_centre_ghg_t_co2e"
+        ],
+        "title": "CitySummary"
+      },
+      "DatasetVersion": {
+        "properties": {
+          "dataset_version_id": {
+            "type": "integer",
+            "title": "Dataset Version Id"
+          },
+          "source_name": {
+            "$ref": "#/components/schemas/SourceName"
+          },
+          "source_key": {
+            "type": "string",
+            "title": "Source Key"
+          },
+          "origin": {
+            "type": "string",
+            "enum": [
+              "download",
+              "sample",
+              "synthetic"
+            ],
+            "title": "Origin"
+          },
+          "is_current": {
+            "type": "boolean",
+            "title": "Is Current",
+            "description": "True when reporting is built from this version."
+          },
+          "source_url": {
+            "type": "string",
+            "title": "Source Url"
+          },
+          "file_sha256": {
+            "type": "string",
+            "title": "File Sha256"
+          },
+          "license": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "License"
+          },
+          "downloaded_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Downloaded At"
+          },
+          "loaded_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Loaded At"
+          },
+          "row_count": {
+            "type": "integer",
+            "title": "Row Count"
+          },
+          "load_check_warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Load Check Warnings"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "dataset_version_id",
+          "source_name",
+          "source_key",
+          "origin",
+          "is_current",
+          "source_url",
+          "file_sha256",
+          "license",
+          "downloaded_at",
+          "loaded_at",
+          "row_count",
+          "load_check_warnings"
+        ],
+        "title": "DatasetVersion"
+      },
+      "DatasetsPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/DatasetVersion"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "Matching items across all pages."
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "DatasetsPage",
+        "description": "A page of dataset versions."
+      },
+      "EdgarSector": {
+        "type": "string",
+        "enum": [
+          "Agriculture",
+          "Energy",
+          "Industry",
+          "Residential",
+          "Transport",
+          "Waste"
+        ],
+        "title": "EdgarSector"
+      },
+      "EmissionItem": {
+        "properties": {
+          "year": {
+            "type": "integer",
+            "title": "Year"
+          },
+          "edgar_sector": {
+            "$ref": "#/components/schemas/EdgarSector"
+          },
+          "gpc_sector_code": {
+            "type": "string",
+            "title": "Gpc Sector Code",
+            "description": "GPC-aligned sector code (provisional, ADR 0002)."
+          },
+          "gpc_sector": {
+            "type": "string",
+            "title": "Gpc Sector"
+          },
+          "mapping_quality": {
+            "type": "string",
+            "enum": [
+              "direct",
+              "approximate",
+              "mixed"
+            ],
+            "title": "Mapping Quality",
+            "description": "How well the EDGAR sector maps to the GPC sector."
+          },
+          "sector_mapping_review_status": {
+            "$ref": "#/components/schemas/ReviewStatus"
+          },
+          "urban_centre_emissions": {
+            "type": "number",
+            "title": "Urban Centre Emissions",
+            "description": "Emissions of the city's GHS **urban centre**, not of its administrative boundary. EDGAR computes emissions for satellite-derived urban centres (GHS-UCDB), whose extent can differ greatly from the city's legal territory: check `uc_share_inside_admin` and the flags. In `unit`."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "year",
+          "edgar_sector",
+          "gpc_sector_code",
+          "gpc_sector",
+          "mapping_quality",
+          "sector_mapping_review_status",
+          "urban_centre_emissions"
+        ],
+        "title": "EmissionItem"
+      },
+      "EmissionsPage": {
+        "properties": {
+          "city": {
+            "$ref": "#/components/schemas/CityContext"
+          },
+          "pollutant": {
+            "$ref": "#/components/schemas/Pollutant"
+          },
+          "unit": {
+            "type": "string",
+            "title": "Unit",
+            "examples": [
+              "t CO2e/yr"
+            ]
+          },
+          "is_ghg_total": {
+            "type": "boolean",
+            "title": "Is Ghg Total",
+            "description": "True for the GHG total, which already contains CO2."
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/EmissionItem"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "city",
+          "pollutant",
+          "unit",
+          "is_ghg_total",
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "EmissionsPage"
+      },
+      "Feature": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "Feature",
+            "title": "Type"
+          },
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "geometry": {
+            "$ref": "#/components/schemas/MultiPolygon"
+          },
+          "properties": {
+            "$ref": "#/components/schemas/ShapeProperties"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "type",
+          "id",
+          "geometry",
+          "properties"
+        ],
+        "title": "Feature"
+      },
+      "Flag": {
+        "type": "string",
+        "enum": [
+          "low_urban_overlap",
+          "suspected_crosswalk_error",
+          "admin_area_mismatch",
+          "crosswalk_needs_review"
+        ],
+        "title": "Flag"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "MultiPolygon": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "MultiPolygon",
+            "title": "Type"
+          },
+          "coordinates": {
+            "items": {
+              "items": {
+                "items": {
+                  "items": {
+                    "type": "number"
+                  },
+                  "type": "array"
+                },
+                "type": "array"
+              },
+              "type": "array"
+            },
+            "type": "array",
+            "title": "Coordinates"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "type",
+          "coordinates"
+        ],
+        "title": "MultiPolygon"
+      },
+      "OverlapResponse": {
+        "properties": {
+          "city": {
+            "$ref": "#/components/schemas/CityContext"
+          },
+          "admin_share_covered": {
+            "type": "number",
+            "title": "Admin Share Covered",
+            "description": "Share of the boundary's area covered by the urban centre."
+          },
+          "iou": {
+            "type": "number",
+            "title": "Iou",
+            "description": "Intersection over union of the two areas."
+          },
+          "uc_area_km2": {
+            "type": "number",
+            "title": "Uc Area Km2"
+          },
+          "admin_area_km2": {
+            "type": "number",
+            "title": "Admin Area Km2"
+          },
+          "intersection_area_km2": {
+            "type": "number",
+            "title": "Intersection Area Km2"
+          },
+          "official_area_km2": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Official Area Km2"
+          },
+          "admin_area_vs_official": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Admin Area Vs Official",
+            "description": "admin_area_km2 / official_area_km2 - 1."
+          },
+          "thresholds": {
+            "$ref": "#/components/schemas/Thresholds"
+          },
+          "match_note": {
+            "type": "string",
+            "title": "Match Note"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "city",
+          "admin_share_covered",
+          "iou",
+          "uc_area_km2",
+          "admin_area_km2",
+          "intersection_area_km2",
+          "official_area_km2",
+          "admin_area_vs_official",
+          "thresholds",
+          "match_note"
+        ],
+        "title": "OverlapResponse"
+      },
+      "Pollutant": {
+        "type": "string",
+        "enum": [
+          "GHG",
+          "CO2",
+          "NOx",
+          "PM2.5"
+        ],
+        "title": "Pollutant"
+      },
+      "ReviewStatus": {
+        "type": "string",
+        "enum": [
+          "accepted",
+          "needs_review"
+        ],
+        "title": "ReviewStatus"
+      },
+      "RevisionItem": {
+        "properties": {
+          "pollutant": {
+            "$ref": "#/components/schemas/Pollutant"
+          },
+          "unit": {
+            "type": "string",
+            "title": "Unit"
+          },
+          "edgar_sector": {
+            "$ref": "#/components/schemas/EdgarSector"
+          },
+          "year": {
+            "type": "integer",
+            "title": "Year"
+          },
+          "revision_type": {
+            "$ref": "#/components/schemas/RevisionType",
+            "description": "`changed`, `added` (only in the newer version) or `removed` (only in the older)."
+          },
+          "from_edgar_version_id": {
+            "type": "integer",
+            "title": "From Edgar Version Id",
+            "description": "Older EDGAR version of the pair (usually not the current one)."
+          },
+          "to_edgar_version_id": {
+            "type": "integer",
+            "title": "To Edgar Version Id",
+            "description": "The next EDGAR version loaded after it."
+          },
+          "from_urban_centre_emissions": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "From Urban Centre Emissions",
+            "description": "Emissions of the city's GHS **urban centre**, not of its administrative boundary. EDGAR computes emissions for satellite-derived urban centres (GHS-UCDB), whose extent can differ greatly from the city's legal territory: check `uc_share_inside_admin` and the flags. Null if added."
+          },
+          "to_urban_centre_emissions": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "To Urban Centre Emissions",
+            "description": "Emissions of the city's GHS **urban centre**, not of its administrative boundary. EDGAR computes emissions for satellite-derived urban centres (GHS-UCDB), whose extent can differ greatly from the city's legal territory: check `uc_share_inside_admin` and the flags. Null if removed."
+          },
+          "change": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Change"
+          },
+          "change_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Change Pct"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "pollutant",
+          "unit",
+          "edgar_sector",
+          "year",
+          "revision_type",
+          "from_edgar_version_id",
+          "to_edgar_version_id",
+          "from_urban_centre_emissions",
+          "to_urban_centre_emissions",
+          "change",
+          "change_pct"
+        ],
+        "title": "RevisionItem"
+      },
+      "RevisionType": {
+        "type": "string",
+        "enum": [
+          "changed",
+          "added",
+          "removed"
+        ],
+        "title": "RevisionType"
+      },
+      "RevisionsPage": {
+        "properties": {
+          "city": {
+            "$ref": "#/components/schemas/CityContext"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/RevisionItem"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "city",
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "RevisionsPage"
+      },
+      "ShapeProperties": {
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": [
+              "administrative_boundary",
+              "urban_centre"
+            ],
+            "title": "Role"
+          },
+          "license": {
+            "type": "string",
+            "title": "License",
+            "description": "Licence of the source file. Attribution is required."
+          },
+          "source_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Url"
+          },
+          "dataset_version_id": {
+            "type": "integer",
+            "title": "Dataset Version Id"
+          },
+          "gb_shape_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gb Shape Id"
+          },
+          "gb_shape_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gb Shape Name"
+          },
+          "gb_adm_level": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gb Adm Level"
+          },
+          "admin_area_km2": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Admin Area Km2"
+          },
+          "official_area_km2": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Official Area Km2"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "role",
+          "license",
+          "source_url",
+          "dataset_version_id"
+        ],
+        "title": "ShapeProperties"
+      },
+      "SourceName": {
+        "type": "string",
+        "enum": [
+          "edgar_ucdb",
+          "ghs_ucdb",
+          "geoboundaries"
+        ],
+        "title": "SourceName"
+      },
+      "Thresholds": {
+        "properties": {
+          "min_urban_overlap": {
+            "type": "number",
+            "title": "Min Urban Overlap"
+          },
+          "suspect_crosswalk_overlap": {
+            "type": "number",
+            "title": "Suspect Crosswalk Overlap"
+          },
+          "admin_area_tolerance": {
+            "type": "number",
+            "title": "Admin Area Tolerance"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "min_urban_overlap",
+          "suspect_crosswalk_overlap",
+          "admin_area_tolerance"
+        ],
+        "title": "Thresholds"
+      },
+      "TrendItem": {
+        "properties": {
+          "year": {
+            "type": "integer",
+            "title": "Year"
+          },
+          "prev_year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prev Year",
+            "description": "Previous year with data (years are not annual). Null for the first."
+          },
+          "urban_centre_emissions": {
+            "type": "number",
+            "title": "Urban Centre Emissions",
+            "description": "All EDGAR sectors summed. Emissions of the city's GHS **urban centre**, not of its administrative boundary. EDGAR computes emissions for satellite-derived urban centres (GHS-UCDB), whose extent can differ greatly from the city's legal territory: check `uc_share_inside_admin` and the flags."
+          },
+          "change_since_prev_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Change Since Prev Pct"
+          },
+          "annualised_change_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Annualised Change Pct",
+            "description": "Compound annual rate since prev_year, in percent."
+          },
+          "sector_count": {
+            "type": "integer",
+            "title": "Sector Count"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "year",
+          "prev_year",
+          "urban_centre_emissions",
+          "change_since_prev_pct",
+          "annualised_change_pct",
+          "sector_count"
+        ],
+        "title": "TrendItem"
+      },
+      "TrendResponse": {
+        "properties": {
+          "city": {
+            "$ref": "#/components/schemas/CityContext"
+          },
+          "pollutant": {
+            "$ref": "#/components/schemas/Pollutant"
+          },
+          "unit": {
+            "type": "string",
+            "title": "Unit"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TrendItem"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "city",
+          "pollutant",
+          "unit",
+          "items"
+        ],
+        "title": "TrendResponse"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      },
+      "Versions": {
+        "properties": {
+          "edgar": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Edgar",
+            "description": "EDGAR emissions version. Null only where no EDGAR figure is involved."
+          },
+          "ghs_ucdb": {
+            "type": "integer",
+            "title": "Ghs Ucdb",
+            "description": "GHS-UCDB urban-centre polygons version."
+          },
+          "geoboundaries": {
+            "type": "integer",
+            "title": "Geoboundaries",
+            "description": "geoBoundaries version (one country file) of the boundary."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "edgar",
+          "ghs_ucdb",
+          "geoboundaries"
+        ],
+        "title": "Versions",
+        "description": "Dataset versions the response's figures come from (see /v1/datasets/{id})."
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "cities",
+      "description": "The cities covered, their match to an urban centre and a boundary, and flags."
+    },
+    {
+      "name": "emissions",
+      "description": "Emissions of the city's GHS **urban centre**, not of its administrative boundary. EDGAR computes emissions for satellite-derived urban centres (GHS-UCDB), whose extent can differ greatly from the city's legal territory: check `uc_share_inside_admin` and the flags. One pollutant per request."
+    },
+    {
+      "name": "geometry",
+      "description": "Administrative boundary and urban centre as GeoJSON (RFC 7946), and their overlap."
+    },
+    {
+      "name": "lineage",
+      "description": "Dataset versions: where every figure comes from."
+    },
+    {
+      "name": "operations",
+      "description": "Liveness and readiness probes."
+    }
+  ]
+}

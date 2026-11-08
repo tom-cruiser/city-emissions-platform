@@ -271,6 +271,7 @@ api/                        FastAPI over reporting (Stage 6)
   routers/                  cities.py, datasets.py             params.py     pagination, year range, city id
 orchestration/              Dagster (Stage 5)
 docs/adr/                   architecture / methodology decision records
+docs/openapi.json           the API contract (snapshot, checked by tests/api/test_openapi.py)
 ```
 
 `transform/` and `orchestration/` are deliberately not called `dbt/` and `dagster/`.
@@ -465,6 +466,26 @@ idle connection, psycopg's `conn.transaction()` *is* the outermost transaction.)
   `*_version_id` column is not tied to `dataset_versions` and to the *current* version.
   Models that hold older versions by design are listed there and must *not* use the
   current-version test.
+
+`tests/api/` covers the API, against `warehouse_test` as `test_api_reader`, after a sample
+load and `scripts/dbt-build.sh test` (skips otherwise; fails under `REQUIRE_TEST_DB=1`):
+
+- **Isolation** (`test_db_isolation.py`, through the API's own engine): connects as the
+  reader, session is read-only, `raw` and `modelled` are denied, writes are refused, the
+  pipeline role's credentials are refused (fails closed), and no API SQL names `raw.` or
+  `modelled.`.
+- **Labels and lineage** (`test_endpoints.py`): every per-city endpoint, for a flagged and an
+  unflagged city, carries `territory_basis`, flags, review status and versions, and every
+  version id resolves at `/v1/datasets/{id}` as current.
+- **Values** equal the reporting tables; **known data**: 25 cities, Accra's four flags,
+  revisions 5 changed + Dakar 192 removed / 192 added, 3 EDGAR versions with one current.
+- **Pagination** (pages join up to the full list, stable order), **filters**, **404s** on
+  every city endpoint, **422s** for 16 kinds of bad input, **503** with the database down.
+- **Enums** equal the values in reporting (`test_enums.py`).
+- **OpenAPI** (`test_openapi.py`): the caveat leads the description and is on every
+  emissions field, and the document equals the committed `docs/openapi.json`. After an
+  intended API change: `UPDATE_OPENAPI_SNAPSHOT=1 uv run pytest tests/api/test_openapi.py`
+  and commit the snapshot with the change.
 
 ## Modelled layer (dbt)
 
