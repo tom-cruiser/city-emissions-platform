@@ -430,3 +430,76 @@ models:
         data_type: text[]
         description: Names of the load checks that passed with a warning (raw.load_checks). Empty when none.
         constraints: [{type: not_null}]
+
+  - name: city_emission_revisions
+    description: >
+      GET /cities/{id}/revisions. Grain: one row per city x pollutant x EDGAR sector x year x
+      pair of consecutive EDGAR versions (by load time), only where the value changed,
+      appeared or disappeared. Emissions of the city's GHS URBAN CENTRE. Holds OLDER
+      versions by design: from/to version columns are tested against dataset_versions,
+      never against the current version. Empty until a second EDGAR version is loaded.
+    constraints:
+      - {type: primary_key, columns: [city_id, pollutant_code, edgar_sector, year, from_edgar_version_id, to_edgar_version_id]}
+    data_tests:
+      - expression_is_true:
+          description: revision_type agrees with which side has a value, and something did change.
+          arguments:
+            expression: >
+              from_urban_centre_emissions is distinct from to_urban_centre_emissions
+              and case revision_type
+                    when 'added' then from_urban_centre_emissions is null and to_urban_centre_emissions is not null
+                    when 'removed' then from_urban_centre_emissions is not null and to_urban_centre_emissions is null
+                    when 'changed' then from_urban_centre_emissions is not null and to_urban_centre_emissions is not null
+                  end
+      - expression_is_true:
+          description: The pair is ordered (from loaded before to) and the versions are different EDGAR files.
+          arguments:
+            expression: >
+              from_edgar_version_id <> to_edgar_version_id
+              and (select loaded_at from {{ ref('dataset_versions') }} where dataset_version_id = from_edgar_version_id)
+                < (select loaded_at from {{ ref('dataset_versions') }} where dataset_version_id = to_edgar_version_id)
+    columns:
+      - *city_id
+      - {name: pollutant_code, data_type: text, constraints: [{type: not_null}]}
+      - {name: edgar_sector, data_type: text, constraints: [{type: not_null}]}
+      - {name: year, data_type: integer, constraints: [{type: not_null}]}
+      - name: from_edgar_version_id
+        data_type: bigint
+        description: The older EDGAR dataset version of the pair. Usually NOT the current one.
+        constraints: [{type: not_null}]
+        data_tests:
+          - relationships:
+              arguments: {to: ref('dataset_versions'), field: dataset_version_id}
+          - expression_is_true:
+              arguments: {expression: "(select source_name from {{ ref('dataset_versions') }} d where d.dataset_version_id = from_edgar_version_id) = 'edgar_ucdb'"}
+      - name: to_edgar_version_id
+        data_type: bigint
+        description: The next EDGAR dataset version loaded after from_edgar_version_id.
+        constraints: [{type: not_null}]
+        data_tests:
+          - relationships:
+              arguments: {to: ref('dataset_versions'), field: dataset_version_id}
+          - expression_is_true:
+              arguments: {expression: "(select source_name from {{ ref('dataset_versions') }} d where d.dataset_version_id = to_edgar_version_id) = 'edgar_ucdb'"}
+      - name: revision_type
+        data_type: text
+        description: "changed | added (only in the newer version) | removed (only in the older)."
+        constraints: [{type: not_null}]
+        data_tests:
+          - accepted_values:
+              arguments: {values: [changed, added, removed]}
+      - *territory_basis
+      - {name: from_urban_centre_emissions, data_type: pg_catalog.numeric, description: Value in the older version (null if added).}
+      - {name: to_urban_centre_emissions, data_type: pg_catalog.numeric, description: Value in the newer version (null if removed).}
+      - {name: change, data_type: pg_catalog.numeric, description: to - from, in `unit`. Null if added or removed.}
+      - {name: change_pct, data_type: double precision, description: (to / from - 1) x 100. Null if added or removed or from = 0.}
+      - {name: pollutant, data_type: text, constraints: [{type: not_null}]}
+      - {name: unit, data_type: text, constraints: [{type: not_null}]}
+      - {name: is_ghg_total, data_type: boolean, constraints: [{type: not_null}]}
+      - *uc_id
+      - *uc_share_inside_admin
+      - *low_urban_overlap
+      - *suspected_crosswalk_error
+      - *crosswalk_review_status
+      - *ucdb_version_id
+      - *gb_version_id

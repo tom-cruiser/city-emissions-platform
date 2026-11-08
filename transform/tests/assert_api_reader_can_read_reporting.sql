@@ -5,6 +5,7 @@
 -- any other role would show up here. One row per problem.
 -- depends_on: {{ ref('cities') }} {{ ref('city_emissions') }} {{ ref('city_emissions_trend') }}
 -- depends_on: {{ ref('city_boundaries') }} {{ ref('city_overlap') }} {{ ref('dataset_versions') }}
+-- depends_on: {{ ref('city_emission_revisions') }}
 {% set reader = env_var('TEST_API_READER_USER', 'test_api_reader') if target.name == 'test'
                 else env_var('API_READER_USER', 'api_reader') %}
 select 'cannot read reporting.' || c.relname as problem

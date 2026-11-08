@@ -46,7 +46,10 @@ def _update_manifest(source_name: str, entries: list[dict]) -> dict:
         manifest = {"files": []}
     manifest["description"] = MANIFEST_DESCRIPTION
     kept = [f for f in manifest["files"] if f["source_name"] != source_name]
-    manifest["files"] = sorted(kept + entries, key=lambda f: (f["source_name"], f["source_key"]))
+    # Within one (source_name, source_key), older files first: manifest order is load order,
+    # and the last-loaded version of a file is the one dbt models (the synthetic EDGAR pair).
+    manifest["files"] = sorted(kept + entries, key=lambda f: (
+        f["source_name"], f["source_key"], f.get("generated_at") or f.get("upstream_downloaded_at") or ""))
     config.SAMPLE_MANIFEST.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n")
     return manifest
 
@@ -80,12 +83,17 @@ def make_boundary_sample(conn: psycopg.Connection) -> list[dict]:
     return entries
 
 
-def make_synthetic_edgar() -> dict:
-    rel = f"edgar/{synthetic.FILENAME}"
-    rows = synthetic.write_synthetic_edgar(config.SAMPLE_DIR / rel)
-    entry = synthetic.manifest_entry(rel, rows)
-    _update_manifest(config.EDGAR_SOURCE_NAME, [entry])
-    return entry
+def make_synthetic_edgar() -> list[dict]:
+    """Write the synthetic EDGAR fixture and its REVISED re-publication (two versions of
+    v2024). Manifest order is load order: the revised file loads second, so it becomes the
+    current version and the revisions models compare the two."""
+    entries = []
+    for revised, name in ((False, synthetic.FILENAME), (True, synthetic.REVISED_FILENAME)):
+        rel = f"edgar/{name}"
+        rows = synthetic.write_synthetic_edgar(config.SAMPLE_DIR / rel, revised=revised)
+        entries.append(synthetic.manifest_entry(rel, rows, revised=revised))
+    _update_manifest(config.EDGAR_SOURCE_NAME, entries)
+    return entries
 
 
 UCDB_SAMPLE_PATH = "ghs_ucdb/GHS_UCDB_GLOBE_R2024A_V1_2_crosswalk_cities.gpkg"

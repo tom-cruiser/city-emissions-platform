@@ -8,6 +8,7 @@ from ingestion.edgar import SourceFormatError, read_edgar_workbook
 from ingestion.geoboundaries import read_features
 
 EDGAR_FIXTURE = SAMPLE_DIR / "edgar" / synthetic.FILENAME
+EDGAR_REVISED_FIXTURE = SAMPLE_DIR / "edgar" / synthetic.REVISED_FILENAME
 
 
 def test_crosswalk_keys_are_unique():
@@ -88,6 +89,34 @@ def test_synthetic_generation_is_reproducible(tmp_path):
     synthetic.write_synthetic_edgar(a)
     synthetic.write_synthetic_edgar(b)
     assert a.read_bytes() == b.read_bytes() == EDGAR_FIXTURE.read_bytes()
+
+
+def test_revised_synthetic_generation_is_reproducible(tmp_path):
+    a = tmp_path / "a.xlsx"
+    synthetic.write_synthetic_edgar(a, revised=True)
+    assert a.read_bytes() == EDGAR_REVISED_FIXTURE.read_bytes()
+    assert a.read_bytes() != EDGAR_FIXTURE.read_bytes()
+
+
+def test_revised_fixture_differs_only_in_the_listed_cells():
+    base = {r["ID_UC_G0"]: r for r in read_edgar_workbook(EDGAR_FIXTURE)[1]}
+    revised = {r["ID_UC_G0"]: r for r in read_edgar_workbook(EDGAR_REVISED_FIXTURE)[1]}
+    assert base.keys() == revised.keys()
+
+    expected = {
+        (uc_id, f"EMI_{p}_{sector}_{year}"): factor
+        for uc_id, sector, year, pollutants, factor in synthetic.REVISIONS
+        for p in pollutants
+    }
+    changed = {
+        (uc_id, col): (base[uc_id][col], revised[uc_id][col])
+        for uc_id in base
+        for col in base[uc_id]
+        if base[uc_id][col] != revised[uc_id][col]
+    }
+    assert changed.keys() == expected.keys()
+    for key, (old, new) in changed.items():
+        assert new == pytest.approx(old * expected[key], rel=1e-9, abs=1e-6)
 
 
 def test_reads_geoboundaries_sample():

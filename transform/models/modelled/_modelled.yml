@@ -129,3 +129,22 @@ models:
               config: {severity: warn}
               description: Warns per city whose urban centre barely touches its boundary. Keeps warning until fixed.
               arguments: {expression: "not suspected_crosswalk_error"}
+
+  - name: fct_city_emissions_by_version
+    description: >
+      Grain: one row per crosswalk city x EDGAR dataset version x pollutant x EDGAR sector x
+      year, for EVERY EDGAR version this target may read. Feeds city_emission_revisions.
+      Its current-version slice must equal fct_city_emissions (tested).
+    data_tests:
+      - unique_combination:
+          arguments: {columns: [city_id, dataset_version_id, pollutant_code, edgar_sector, year]}
+    columns:
+      - name: dataset_version_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments: {to: ref('stg_raw__dataset_versions'), field: dataset_version_id}
+      - name: pollutant
+        data_tests: [not_null]
+      - name: value
+        data_tests: [not_null]

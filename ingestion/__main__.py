@@ -4,7 +4,7 @@
     python -m ingestion load --mode download --source edgar
     python -m ingestion load --mode sample --target test     # offline sample -> warehouse_test only
     python -m ingestion make-sample                          # rebuild boundary + GHS-UCDB samples from latest downloads
-    python -m ingestion make-synthetic                       # regenerate the SYNTHETIC EDGAR fixture (file only)
+    python -m ingestion make-synthetic                       # regenerate the SYNTHETIC EDGAR fixtures (files only)
 
 Sample and synthetic data are refused by any database not named *_test, so
 `load --mode sample` without `--target test` exits with an error.
@@ -35,8 +35,8 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.command == "make-synthetic":
-        entry = make_synthetic_edgar()
-        print(f"SYNTHETIC {entry['source_name']} {entry['rows']} rows -> data/sample/{entry['path']}")
+        for entry in make_synthetic_edgar():
+            print(f"SYNTHETIC {entry['source_name']} {entry['rows']} rows -> data/sample/{entry['path']}")
         return
 
     # autocommit: each file's load is committed by its own `conn.transaction()` block.

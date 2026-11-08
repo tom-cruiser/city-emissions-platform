@@ -8,9 +8,14 @@ ALL_SOURCES = list(SOURCES.values())
 def test_sample_load_is_idempotent(db_conn):
     first = run_sample(db_conn, ALL_SOURCES)
     assert first and not any(r.skipped or r.error for r in first)
-    assert len(first) == 26  # 1 EDGAR file + 24 boundary files + 1 GHS-UCDB GeoPackage
+    # 2 EDGAR files (the synthetic fixture and its revised re-publication, two versions of
+    # v2024) + 24 boundary files + 1 GHS-UCDB GeoPackage
+    assert len(first) == 27
     rows = {name: sum(r.rows_loaded for r in first if r.source_name == name) for name in ALL_SOURCES}
-    assert rows == {"edgar_ucdb": 27, "geoboundaries": 25, "ghs_ucdb": 25}
+    assert rows == {"edgar_ucdb": 2 * 27, "geoboundaries": 25, "ghs_ucdb": 25}
+    edgar = [r for r in first if r.source_name == "edgar_ucdb"]
+    assert [r.source_key for r in edgar] == ["v2024", "v2024"]
+    assert edgar[0].dataset_version_id < edgar[1].dataset_version_id  # base first, revised second
 
     second = run_sample(db_conn, ALL_SOURCES)
     assert all(r.skipped for r in second)  # same bytes -> no new dataset versions
@@ -35,7 +40,7 @@ def test_every_raw_row_traces_to_a_dataset_version(db_conn):
         """
     ).fetchall()
 
-    assert len(versions) == 26
+    assert len(versions) == 27
     for source, origin, sha, upstream_sha, obtained_at, raw_rows, row_count in versions:
         assert raw_rows == row_count > 0  # every version has exactly the rows it claims
         assert len(sha) == 64 and obtained_at is not None

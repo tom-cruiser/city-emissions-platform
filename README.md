@@ -5,7 +5,7 @@ It ingests open emissions data and city boundaries, models them in layered
 PostgreSQL/PostGIS storage with dbt, orchestrates with Dagster, and serves curated
 data through a read-only FastAPI service.
 
-> **Status: work in progress.** Stages 1–3 are built; Stage 4 (reporting layer) is in progress.
+> **Status: work in progress.** Stages 1–4 are built; Stage 5 (Dagster orchestration) is next.
 > See [Build status](#build-status). This README describes only what exists today and
 > marks everything planned as such.
 
@@ -16,7 +16,7 @@ data through a read-only FastAPI service.
 | 1 | Repo structure, Docker Compose, PostGIS, schemas and roles | ✅ Done |
 | 2 | Source verification, Python ingestion into `raw`, dataset versioning, load checks | ✅ Done |
 | 3 | dbt: modelled layer, seeds, tests | ✅ Done |
-| 4 | Reporting layer and dbt snapshots | 🚧 In progress |
+| 4 | Reporting layer and dbt snapshots | ✅ Done |
 | 5 | Dagster orchestration | ⏳ Planned |
 | 6 | FastAPI service and tests | ⏳ Planned |
 | 7 | GitHub Actions CI | ⏳ Planned |
@@ -48,14 +48,17 @@ data through a read-only FastAPI service.
 
 **Stage 4 items**
 
-1. ✅ **Reporting layer**: 6 models in `reporting`, designed backwards from the API
+1. ✅ **Reporting layer**: 7 models in `reporting`, designed backwards from the API
    endpoints, each a table with an enforced dbt contract. Every emissions figure is labelled
    as the emissions of the city's *urban centre* and carries its overlap, flags, review
    status and dataset versions. `api_reader` is tested to read every one after a rebuild.
    See [Reporting layer (dbt)](#reporting-layer-dbt).
 2. ✅ **Snapshots** of the crosswalk and the sector map, both edited in place, with a
    `pg_dump` backup because they cannot be rebuilt. See [Snapshots](#snapshots).
-3. ⏳ **Revisions** between EDGAR versions.
+3. ✅ **Revisions** between EDGAR versions, modelled by comparing dataset versions
+   (`city_emission_revisions`). Tested on `warehouse_test` with a second, *revised*
+   synthetic EDGAR file; empty on the real warehouse until a second EDGAR version exists.
+   See [Revisions between EDGAR versions](#revisions-between-edgar-versions).
 
 ## Architecture (current)
 
@@ -81,12 +84,12 @@ flowchart LR
     U --> D
     D --> L --> R
     X -. which boundary files .-> D
-    R -- dbt staging --> M -. Stage 4 .-> P
+    R -- dbt staging --> M -- dbt reporting --> P
     X -- dbt seed --> M
     P -. Stage 6: read-only .-> API[FastAPI]
 ```
 
-Dotted lines are planned.
+Dotted lines are planned (the API), or a lookup rather than data flow (which boundary files to fetch).
 
 ### Layered schemas and access
 
@@ -160,7 +163,7 @@ docker compose up -d --wait          # PostGIS on 127.0.0.1:5434 (warehouse + wa
 uv sync                              # Python 3.12 environment from uv.lock
 
 uv run python -m ingestion load --mode download                # real files into warehouse (~25 MB EDGAR, ~70 MB boundaries, 277 MB GHS-UCDB)
-uv run python -m ingestion load --mode sample --target test    # offline: synthetic EDGAR + real extracts into warehouse_test
+uv run python -m ingestion load --mode sample --target test    # offline: 2 synthetic EDGAR versions + real extracts into warehouse_test
 uv run pytest -q                                               # runs against warehouse_test only
 
 # dbt (Stage 3). --env-file passes .env to dbt; profiles.yml holds no secrets.
@@ -233,12 +236,15 @@ transform/                  dbt project (Stage 3)
   models/staging/           stg_* : one version per source, names repaired, geometry repaired
   models/modelled/          dim_city, fct_urban_centre_emissions, fct_city_emissions, city_territory_overlap
   models/reporting/         what the API serves: cities, city_emissions, city_emissions_trend,
-                            city_boundaries, city_overlap, dataset_versions (contracts enforced)
+                            city_boundaries, city_overlap, dataset_versions, city_emission_revisions
+                            (contracts enforced)
   snapshots/                snap_city_crosswalk, snap_edgar_sector_map (history of seeds edited in place)
-  macros/                   raw_origins (guard), repair_mojibake, overlap_metrics, change_pct, schema naming
+  macros/                   raw_origins (guard), unpivot_edgar_emissions, repair_mojibake, overlap_metrics,
+                            change_pct, schema naming
   tests/                    generic tests (no packages) + singular tests
 data/sample/                committed offline sample + manifest.json
   edgar/…_SYNTHETIC.xlsx    invented values, real structure
+  edgar/…_SYNTHETIC_REVISED.xlsx   the same, re-published with known corrections (2nd version)
   geoboundaries/            real polygons for the 25 cities, unmodified
   ghs_ucdb/…_crosswalk_cities.gpkg   the 25 crosswalk urban centres, one layer (160 KB)
 data/raw/                   full downloads (git-ignored), named <sha256-prefix>_<file>
@@ -312,6 +318,22 @@ from. Each file is loaded with the same loader as the real data.
 
 The urban-centre IDs and names in it are real. They come from the GHS Urban Centre
 Database (CC BY 4.0) and are needed to match the crosswalk.
+
+**The revised fixture.** `…_SYNTHETIC_REVISED.xlsx` is the same release re-published with a
+few cells corrected (`synthetic.REVISIONS`), the way a source can silently fix a file
+under the same name. It is generated from the same random draws, so it differs *only* in
+those cells (`test_revised_fixture_differs_only_in_the_listed_cells`):
+
+| Urban centre | Sector, year | Pollutants | Factor |
+|---|---|---|---|
+| Kigali (597) | Transport 2022 | CO2 and GHG | ×1.25 |
+| Nairobi (1717) | Energy 1990 | CO2 and GHG | ×0.8 |
+| Lagos (1289) | Residential 2015 | PM2.5 | ×1.5 |
+| Synthetic Town (990002, not in the crosswalk) | Waste 2020 | CO2 and GHG | ×2 |
+
+CO2 and GHG are scaled together, so GHG ≥ CO2 still holds. The manifest lists it after the
+original with a later `generated_at`, and the sample load runs in manifest order. So
+`warehouse_test` holds two dataset versions of EDGAR `v2024`, and the revised one is current.
 
 ## GHS-UCDB urban centres
 
@@ -432,6 +454,9 @@ carries the `dataset_version_id` of the raw file it came from.
 | `dim_city` | a crosswalk city | table | carries the boundary geometry |
 | `fct_urban_centre_emissions` | urban centre × pollutant × EDGAR sector × year, **current EDGAR version only** (2.24M rows) | table | source-quality tests cover every urban centre |
 | `fct_city_emissions` | city × pollutant × EDGAR sector × year, **current EDGAR version only** (4,800 rows) | table | what later stages read |
+| `stg_raw__dataset_versions`, `stg_raw__load_checks` | every allowed dataset version (with `is_current`) / its load checks | view | lineage for reporting and revisions |
+| `stg_edgar__crosswalk_emissions_by_version` | crosswalk urban centre × emission column × **every** EDGAR version | view | same unpivot macro, filtered to the 25 cities first |
+| `fct_city_emissions_by_version` | city × EDGAR version × pollutant × sector × year | table | input to `city_emission_revisions`; its current slice must equal `fct_city_emissions` |
 | `city_territory_overlap` | a crosswalk city | table | geometry operations |
 
 Nothing is incremental: a full rebuild takes ~40 s. History comes from dataset versions
@@ -506,6 +531,7 @@ model was designed from the endpoint that will serve it (Stage 6).
 | `city_boundaries` | `GET /cities/{id}/boundary` | a city: boundary + urban centre as GeoJSON, bbox, licences | 25 |
 | `city_overlap` | `GET /cities/{id}/overlap` | a city: overlap metrics, flags, thresholds used | 25 |
 | `dataset_versions` | `GET /datasets` | a dataset version (current or not), with its load-check warnings | 26 |
+| `city_emission_revisions` | `GET /cities/{id}/revisions` | city × pollutant × sector × year × consecutive EDGAR version pair, changed cells only | 0 (one EDGAR version) |
 
 **Every model is a table with an enforced contract** (`dbt_project.yml`). Column names and
 types are declared in `models/reporting/_reporting.yml`, and `not_null` / primary-key /
@@ -575,13 +601,44 @@ its source (`tests/generic/is_current_version.sql`). Plus:
 The access test was checked by revoking `SELECT` on one table: the test failed, and
 rebuilding that table restored the grant through the default privileges.
 
+## Revisions between EDGAR versions
+
+Sources are versioned in `raw` (a new file is a new `dataset_version_id`), so a revision is
+the difference between two versions. No snapshot is needed.
+
+- `stg_edgar__crosswalk_emissions_by_version` reads **every** EDGAR version this target
+  may use, for the 25 crosswalk urban centres only. It uses the same macro as the
+  current-version staging model (`macros/unpivot_edgar_emissions.sql`), but filters before
+  unpivoting, so each extra version costs 25 records, not 11,686.
+- `fct_city_emissions_by_version` adds the city and the pollutant metadata. Its
+  current-version slice must equal `fct_city_emissions` cell for cell, which ties the
+  revisions to what reporting serves.
+- `reporting.city_emission_revisions` pairs each EDGAR version with the next one loaded
+  (across `source_key` too, so a v2025 release would be compared with the last v2024 file)
+  and keeps only cells that `changed`, were `added` or were `removed`. Each row has both
+  values, `change`, `change_pct`, the urban-centre label and today's overlap flags.
+
+**Version tests.** Every other reporting model requires its `*_version_id` columns to be
+the *current* version. `from_edgar_version_id` and `to_edgar_version_id` hold older versions
+by design, so they are only tied to `dataset_versions` and to EDGAR, and the pair must be
+in load order. `tests/transform/test_reporting_manifest.py` lists those two columns as the
+only exemptions. It fails if one of them gains the current-version test, or if any other
+version column lacks it.
+
+**Tested with real changes.** On `warehouse_test`, `assert_revisions_known_changes` (test
+target only) requires exactly the five crosswalk cells of the revised fixture, with their
+factors, and nothing else. The ×2 change to the non-crosswalk urban centre must not appear.
+Changing one expected factor made it fail. `added`/`removed` follow from the same full
+join but have no fixture yet. On the real warehouse the table is empty until a second
+EDGAR version is loaded.
+
 ## Snapshots
 
 **Where history comes from.** Two kinds of change, two mechanisms:
 
 | What changes | How it is recorded | Why |
 |---|---|---|
-| Source data (EDGAR, GHS-UCDB, geoBoundaries) | a new `raw.dataset_versions` row; `raw` is append-only | rebuildable from `raw` at any time; captures every release even if two are loaded between dbt runs |
+| Source data (EDGAR, GHS-UCDB, geoBoundaries) | a new `raw.dataset_versions` row; `raw` is append-only. EDGAR revisions are modelled by comparing versions: [`city_emission_revisions`](#revisions-between-edgar-versions) | rebuildable from `raw` at any time; captures every release even if two are loaded between dbt runs |
 | The crosswalk and the sector map (seeds, **edited in place**) | dbt snapshots `snap_city_crosswalk`, `snap_edgar_sector_map` in `modelled` | git records *who changed what and why*; the snapshot records *when it went live in this warehouse*, queryable in SQL |
 
 The sector map needs a snapshot as much as the crosswalk does: changing it relabels every
@@ -790,7 +847,7 @@ fetched from a commit-pinned GitHub URL, recorded in `raw.dataset_versions.sourc
 
 ## Next steps
 
-Stage 4: reporting layer and dbt snapshots. Decided: cities with
-`review_status = needs_review` (Accra, Buenos Aires) are **included** in reporting with
-their flags (`review_status`, `low_urban_overlap`, `suspected_crosswalk_error`), not left out.
-Mixed GPC sectors are shown under their EDGAR name (ADR 0002).
+Stage 5: Dagster orchestration. It runs ingestion, the snapshot backup, then `dbt build`
+with `GIT_COMMIT` set, as one job. The reporting layer stays as built in Stage 4:
+`needs_review` cities (Accra, Buenos Aires) are included with their flags, never left out,
+and mixed GPC sectors are shown under their EDGAR name (ADR 0002).

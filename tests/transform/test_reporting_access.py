@@ -42,7 +42,7 @@ def test_reader_reads_every_reporting_model(reader_conn, dbt_manifest):
         except psycopg.Error as exc:
             problems.append(f"reporting.{name}: {exc.diag.message_primary}")
             continue
-        if n == 0 and name != "city_emission_revisions":  # empty until a second EDGAR version exists
+        if n == 0:  # warehouse_test has two EDGAR versions, so even the revisions table has rows
             problems.append(f"reporting.{name}: readable but empty")
     assert not problems, "\n".join(problems)
 
