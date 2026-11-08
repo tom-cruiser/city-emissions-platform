@@ -1,0 +1,21 @@
+# Dagster instance config. DAGSTER_HOME points at this folder (scripts/dagster-dev.sh locally,
+# orchestration/Dockerfile in Compose).
+#
+# Runs, schedules and event logs go to the separate `dagster` database (db/init/03-dagster-db.sh),
+# never to the warehouse. Connection values come from the environment: PGHOST and
+# POSTGRES_PORT as for every other client, DAGSTER_PG_* for the database and its role.
+storage:
+  postgres:
+    postgres_db:
+      hostname: {env: PGHOST}
+      port: {env: POSTGRES_PORT}
+      db_name: {env: DAGSTER_PG_DB}
+      username: {env: DAGSTER_PG_USER}
+      password: {env: DAGSTER_PG_PASSWORD}
+
+# One run at a time: two loads of the same source must not race, and dbt builds replace tables.
+run_queue:
+  max_concurrent_runs: 1
+
+telemetry:
+  enabled: false

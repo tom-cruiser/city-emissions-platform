@@ -20,6 +20,10 @@ services:
       TEST_PIPELINE_PASSWORD: ${TEST_PIPELINE_PASSWORD}
       TEST_API_READER_USER: ${TEST_API_READER_USER}
       TEST_API_READER_PASSWORD: ${TEST_API_READER_PASSWORD}
+      # Read by db/init/03-dagster-db.sh to create Dagster's own storage database.
+      DAGSTER_PG_DB: ${DAGSTER_PG_DB}
+      DAGSTER_PG_USER: ${DAGSTER_PG_USER}
+      DAGSTER_PG_PASSWORD: ${DAGSTER_PG_PASSWORD}
     ports:
       # Bound to localhost only, so the DB is not exposed on your network.
       - "127.0.0.1:${POSTGRES_PORT:-5434}:5432"
