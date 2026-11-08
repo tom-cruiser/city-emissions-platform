@@ -5,7 +5,7 @@ It ingests open emissions data and city boundaries, models them in layered
 PostgreSQL/PostGIS storage with dbt, orchestrates with Dagster, and serves curated
 data through a read-only FastAPI service.
 
-> **Status: work in progress.** Stages 1–4 are built; Stage 5 (Dagster orchestration) is next.
+> **Status: work in progress.** Stages 1–4 are built; Stage 6 (FastAPI) is in progress, then Stage 5 (Dagster).
 > See [Build status](#build-status). This README describes only what exists today and
 > marks everything planned as such.
 
@@ -18,7 +18,7 @@ data through a read-only FastAPI service.
 | 3 | dbt: modelled layer, seeds, tests | ✅ Done |
 | 4 | Reporting layer and dbt snapshots | ✅ Done |
 | 5 | Dagster orchestration | ⏳ Planned |
-| 6 | FastAPI service and tests | ⏳ Planned |
+| 6 | FastAPI service and tests | 🚧 In progress |
 | 7 | GitHub Actions CI | ⏳ Planned |
 | 8 | Full docs, diagrams, ADRs | ⏳ Planned |
 
@@ -163,7 +163,7 @@ Requires Docker and [uv](https://docs.astral.sh/uv/) (uv installs Python 3.12 it
 ```bash
 cp .env.example .env                 # then change the passwords
 docker compose up -d --wait          # PostGIS on 127.0.0.1:5434 (warehouse + warehouse_test)
-uv sync                              # Python 3.12 environment from uv.lock
+uv sync                              # Python 3.12 environment from uv.lock (all dependency groups)
 
 uv run python -m ingestion load --mode download                # real files into warehouse (~25 MB EDGAR, ~70 MB boundaries, 277 MB GHS-UCDB)
 uv run python -m ingestion load --mode sample --target test    # offline: 3 synthetic EDGAR versions + real extracts into warehouse_test
@@ -836,6 +836,10 @@ fetched from a commit-pinned GitHub URL, recorded in `raw.dataset_versions.sourc
   so the API is a thin read layer with no joins or PostGIS calls of its own.
 - **Methodology in seeds and vars, not SQL.** The sector mapping, crosswalk and thresholds
   can be reviewed and changed without touching model code.
+- **Dependencies split by where they run** (`pyproject.toml`): a small shared base
+  (pydantic, psycopg), `api` (FastAPI, uvicorn, SQLAlchemy Core), `pipeline` (dbt,
+  Dagster, ingestion libraries) and `dev` (all of them plus pytest and ruff, the default
+  for `uv sync`). The API image installs only `api`: 25 packages, no dbt or Dagster.
 - **Python 3.12 only.** dagster-dbt 0.29.28 declares `requires_python <3.14`. uv
   ignores that cap and would install on 3.14, but pip correctly refuses, so 3.14 is
   unsupported here. 3.11–3.13 all install and import cleanly.

@@ -6,7 +6,24 @@ description = "Open city GHG emissions warehouse: PostGIS + dbt + Dagster + Fast
 requires-python = ">=3.12,<3.13"
 
 # Direct dependencies are pinned exactly; uv.lock pins every transitive one too.
+# Split by what runs where, so the API image installs only what the API needs:
+#   (base)    shared by everything: settings, database driver
+#   api       the FastAPI service (Docker image: uv sync --no-default-groups --group api)
+#   pipeline  ingestion, dbt, Dagster
+#   dev       everything, plus test and lint tools: what `uv sync` installs by default
 dependencies = [
+    "pydantic==2.14.3",
+    "pydantic-settings==2.16.2",
+    "psycopg[binary]==3.3.8",
+]
+
+[dependency-groups]
+api = [
+    "fastapi==0.162.0",
+    "uvicorn[standard]==0.54.0",
+    "sqlalchemy==2.1.8",  # Core only: connection pool + text() queries, no ORM
+]
+pipeline = [
     # Transformation
     "dbt-core==1.12.6",
     "dbt-postgres==1.11.0",
@@ -15,24 +32,16 @@ dependencies = [
     "dagster-dbt==0.29.28",
     "dagster-postgres==0.29.28",
     "dagster-webserver==1.13.28",
-    # API
-    "fastapi==0.162.0",
-    "uvicorn[standard]==0.54.0",
-    "pydantic==2.14.3",
-    "pydantic-settings==2.16.2",
-    # Database access
-    "psycopg[binary]==3.3.8",
-    "sqlalchemy==2.1.8",
-    "geoalchemy2==0.21.0",
-    # HTTP (downloads in ingestion, TestClient in API tests)
+    # Ingestion
     "httpx==0.28.1",
     "openpyxl==3.1.5",
 ]
-
-[dependency-groups]
 dev = [
+    { include-group = "api" },
+    { include-group = "pipeline" },
     "pytest==9.2.0",
     "ruff==0.17.3",
+    # httpx (pipeline) also provides FastAPI's TestClient.
 ]
 
 [tool.pytest.ini_options]
