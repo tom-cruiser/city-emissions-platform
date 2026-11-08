@@ -5,7 +5,7 @@ It ingests open emissions data and city boundaries, models them in layered
 PostgreSQL/PostGIS storage with dbt, orchestrates with Dagster, and serves curated
 data through a read-only FastAPI service.
 
-> **Status: work in progress.** Stages 1–4 are built; Stage 6 (FastAPI) is in progress, then Stage 5 (Dagster).
+> **Status: work in progress.** Stages 1–4 and 6 are built; Stage 5 (Dagster orchestration) is next.
 > See [Build status](#build-status). This README describes only what exists today and
 > marks everything planned as such.
 
@@ -18,7 +18,7 @@ data through a read-only FastAPI service.
 | 3 | dbt: modelled layer, seeds, tests | ✅ Done |
 | 4 | Reporting layer and dbt snapshots | ✅ Done |
 | 5 | Dagster orchestration | ⏳ Planned |
-| 6 | FastAPI service and tests | 🚧 In progress |
+| 6 | FastAPI service and tests | ✅ Done |
 | 7 | GitHub Actions CI | ⏳ Planned |
 | 8 | Full docs, diagrams, ADRs | ⏳ Planned |
 
@@ -63,6 +63,16 @@ data through a read-only FastAPI service.
 4. ✅ **One build command**, `scripts/dbt-build.sh`, which sets `GIT_COMMIT` from git for
    the snapshots. Local runs, CI and Dagster all call it.
 
+**Stage 6 items** (built before Stage 5, since reporting was designed from the endpoints)
+
+1. ✅ **Read-only FastAPI service** over `reporting`: 9 data endpoints plus health and
+   readiness. Every response carries the urban-centre label, flags, review statuses and
+   dataset versions. See [API (FastAPI)](#api-fastapi).
+2. ✅ **Reader role only**, enforced three ways, and tested through the API's own engine.
+3. ✅ **Tests** against `warehouse_test` and an OpenAPI snapshot (`docs/openapi.json`).
+4. ✅ **Docker Compose service** `api`: only the `api` dependency group, non-root,
+   read-only filesystem, reader credentials only, on `127.0.0.1:8000`.
+
 ## Architecture (current)
 
 ```mermaid
@@ -89,10 +99,10 @@ flowchart LR
     X -. which boundary files .-> D
     R -- dbt staging --> M -- dbt reporting --> P
     X -- dbt seed --> M
-    P -. Stage 6: read-only .-> API[FastAPI]
+    P -- api_reader, read-only --> API[FastAPI<br/>127.0.0.1:8000]
 ```
 
-Dotted lines are planned (the API), or a lookup rather than data flow (which boundary files to fetch).
+Dotted lines are a lookup rather than data flow (which boundary files to fetch).
 
 ### Layered schemas and access
 
@@ -162,18 +172,25 @@ Requires Docker and [uv](https://docs.astral.sh/uv/) (uv installs Python 3.12 it
 
 ```bash
 cp .env.example .env                 # then change the passwords
-docker compose up -d --wait          # PostGIS on 127.0.0.1:5434 (warehouse + warehouse_test)
+docker compose up -d --wait          # PostGIS on 127.0.0.1:5434 + the API on 127.0.0.1:8000
 uv sync                              # Python 3.12 environment from uv.lock (all dependency groups)
 
-uv run python -m ingestion load --mode download                # real files into warehouse (~25 MB EDGAR, ~70 MB boundaries, 277 MB GHS-UCDB)
-uv run python -m ingestion load --mode sample --target test    # offline: 3 synthetic EDGAR versions + real extracts into warehouse_test
-uv run pytest -q                                               # runs against warehouse_test only
+# Real data -> warehouse (~25 MB EDGAR, ~70 MB boundaries, 277 MB GHS-UCDB), then build it.
+uv run python -m ingestion load --mode download
+scripts/dbt-build.sh                 # dbt always runs through this script (sets GIT_COMMIT, reads .env)
 
-# dbt: always through the build script (sets GIT_COMMIT for the snapshots, reads .env).
-scripts/dbt-build.sh             # warehouse (download data)
-scripts/dbt-build.sh test        # warehouse_test (sample); run before pytest
+# Offline sample -> warehouse_test, build it, then the tests (in this order).
+uv run python -m ingestion load --mode sample --target test   # 3 synthetic EDGAR versions + real extracts
+scripts/dbt-build.sh test
+uv run pytest -q                     # runs against warehouse_test only
+
 scripts/dbt-build.sh test --select cities+   # extra arguments go to dbt build
 ```
+
+Then open the API docs at **http://127.0.0.1:8000/docs** (Swagger UI) or
+**http://127.0.0.1:8000/redoc**. `curl http://127.0.0.1:8000/ready` says whether
+`reporting` is built. Before the first `scripts/dbt-build.sh`, it answers 503, while
+`/health` (the container's healthcheck) is already up.
 
 `scripts/dbt-build.sh` is the only supported way to run `dbt build`; CI (Stage 7) and
 Dagster (Stage 5) call the same script. It sets `GIT_COMMIT` to the HEAD commit, with
@@ -264,7 +281,7 @@ backups/                    snapshot backups from pg_dump (git-ignored)
 scripts/dbt-build.sh        the one dbt build command (sets GIT_COMMIT); used locally, in CI, by Dagster
 tests/                      pytest against warehouse_test: unit + rolled-back integration tests
   transform/                rules on the parsed dbt project; api reader access after dbt build
-api/                        FastAPI over reporting (Stage 6)
+api/                        FastAPI over reporting (Stage 6); Dockerfile builds the `api` service
   main.py                   app factory, /health, /ready      settings.py   reader-role settings only
   db.py                     read-only engine, privilege check  queries.py    every SQL statement
   models.py                 response models + enums            docs.py       OpenAPI text (urban-centre caveat)
@@ -800,10 +817,26 @@ so in its OpenAPI description.
 Each per-city request reads its tables in one `REPEATABLE READ` transaction, so the `city`
 block and the rows come from the same snapshot.
 
-Run locally against the warehouse (reads `.env`):
+**Running it.** In Docker Compose (the `api` service, started by `docker compose up -d --wait`):
 
 ```bash
-uv run uvicorn --factory api.main:create_app --port 8000
+docker compose up -d --wait           # db + api; api waits for the db healthcheck
+open http://127.0.0.1:8000/docs       # or xdg-open / paste into a browser
+curl -s http://127.0.0.1:8000/v1/cities/jakarta-idn | python -m json.tool
+docker compose build api              # after changing api/ or the api dependency group
+docker compose logs -f api
+```
+
+The image (`api/Dockerfile`) installs only the `api` dependency group from `uv.lock`, runs
+uvicorn as a non-root user, and in Compose has a read-only filesystem, no Linux
+capabilities, and `127.0.0.1` only (`API_PORT`, default 8000). It is given exactly five
+variables: database host, port and name, and the reader's user and password
+(`tests/test_compose.py` fails if a pipeline or superuser variable is added).
+
+Without Docker, against the warehouse in `.env`:
+
+```bash
+uv run uvicorn --factory api.main:create_app --port 8000 --reload
 ```
 
 ## City matching (crosswalk)
@@ -968,8 +1001,7 @@ fetched from a commit-pinned GitHub URL, recorded in `raw.dataset_versions.sourc
 
 ## Next steps
 
-Stage 6: the FastAPI service over `reporting`, before Dagster, since reporting was designed
-backwards from the endpoints. Then Stage 5: Dagster runs ingestion, the snapshot backup,
-then `scripts/dbt-build.sh`, as one job. The reporting layer stays as built in Stage 4:
+Stage 5: Dagster runs ingestion, the snapshot backup, then `scripts/dbt-build.sh`, as one
+job, and checks the API's `/ready` afterwards. The reporting layer stays as built in Stage 4:
 `needs_review` cities (Accra, Buenos Aires) are included with their flags, never left out,
 and mixed GPC sectors are shown under their EDGAR name (ADR 0002).

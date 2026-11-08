@@ -1,0 +1,17 @@
+# The API image needs only pyproject.toml, uv.lock and api/. Keep everything else, and
+# above all secrets, out of the build context.
+.env
+.env.*
+.git
+.venv
+**/__pycache__
+data/
+backups/
+transform/
+ingestion/
+tests/
+orchestration/
+db/
+docs/
+scripts/
+*.md

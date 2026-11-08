@@ -1,4 +1,4 @@
-# The warehouse (and warehouse_test). Ingestion, Dagster and the API are added in later stages.
+# The warehouse (and warehouse_test) and the read-only API. Dagster is added in Stage 5.
 name: city-emissions-platform
 
 services:
@@ -32,6 +32,39 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    image: city-emissions-api:local
+    # ONLY the reader role's credentials: this container never sees the pipeline password,
+    # and the API refuses any role that can do more than read `reporting` (api/db.py).
+    # tests/test_compose.py fails if a pipeline or superuser variable is added here.
+    environment:
+      PGHOST: db
+      POSTGRES_PORT: "5432"   # inside the Compose network, not the host port
+      POSTGRES_DB: ${POSTGRES_DB}
+      API_READER_USER: ${API_READER_USER}
+      API_READER_PASSWORD: ${API_READER_PASSWORD}
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      # Localhost only, like the database. No auth or rate limiting: see README Limitations.
+      - "127.0.0.1:${API_PORT:-8000}:8000"
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    # Liveness (/health), not readiness: the container is healthy before reporting is
+    # built; /ready answers 503 until then.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
 
 volumes:
   pgdata:
