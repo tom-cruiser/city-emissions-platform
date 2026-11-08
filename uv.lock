@@ -181,11 +181,13 @@ dev = [
     { name = "sqlalchemy" },
     { name = "uvicorn", extra = ["standard"] },
 ]
-pipeline = [
+orchestration = [
     { name = "dagster" },
     { name = "dagster-dbt" },
     { name = "dagster-postgres" },
     { name = "dagster-webserver" },
+]
+pipeline = [
     { name = "dbt-core" },
     { name = "dbt-postgres" },
     { name = "httpx" },
@@ -220,11 +222,13 @@ dev = [
     { name = "sqlalchemy", specifier = "==2.1.8" },
     { name = "uvicorn", extras = ["standard"], specifier = "==0.54.0" },
 ]
-pipeline = [
+orchestration = [
     { name = "dagster", specifier = "==1.13.28" },
     { name = "dagster-dbt", specifier = "==0.29.28" },
     { name = "dagster-postgres", specifier = "==0.29.28" },
     { name = "dagster-webserver", specifier = "==1.13.28" },
+]
+pipeline = [
     { name = "dbt-core", specifier = "==1.12.6" },
     { name = "dbt-postgres", specifier = "==1.11.0" },
     { name = "httpx", specifier = "==0.28.1" },
