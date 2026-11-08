@@ -1,0 +1,10 @@
+# Weekly updates for the GitHub Actions pinned in .github/workflows (SHA pins + version
+# comments). Python dependencies are pinned in uv.lock and updated by hand.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci

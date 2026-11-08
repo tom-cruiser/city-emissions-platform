@@ -60,6 +60,8 @@ def test_emissions_tag_repeats_the_caveat(spec):
 def test_spec_matches_the_committed_snapshot(spec):
     rendered = json.dumps(spec, indent=2, ensure_ascii=False) + "\n"
     if os.environ.get("UPDATE_OPENAPI_SNAPSHOT") == "1":
+        if os.environ.get("CI"):
+            pytest.fail("UPDATE_OPENAPI_SNAPSHOT is refused in CI: regenerate locally and commit the snapshot")
         SNAPSHOT.write_text(rendered, encoding="utf-8")
     assert SNAPSHOT.exists(), "no snapshot: run with UPDATE_OPENAPI_SNAPSHOT=1"
     assert SNAPSHOT.read_text(encoding="utf-8") == rendered, (
