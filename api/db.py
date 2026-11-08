@@ -9,10 +9,11 @@ Three layers keep the API read-only and inside `reporting`:
    fails closed when it is given the wrong credentials, instead of quietly working.
 """
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from typing import Any
 
-from sqlalchemy import Engine, create_engine, event, text
+from sqlalchemy import Connection, Engine, create_engine, event, text
 from sqlalchemy.engine import URL
 
 from api.errors import UnsafeDatabaseRoleError
@@ -62,11 +63,17 @@ def make_engine(settings: ApiSettings) -> Engine:
     return engine
 
 
-def fetch_all(engine: Engine, sql: str, params: Mapping[str, Any] | None = None) -> Sequence[Mapping[str, Any]]:
-    with engine.connect() as conn:
-        return conn.execute(text(sql), dict(params or {})).mappings().all()
+@contextmanager
+def snapshot(engine: Engine) -> Iterator[Connection]:
+    """One read-only connection whose queries all see the same snapshot (REPEATABLE READ),
+    so an endpoint that reads two tables never mixes two dbt builds' commits."""
+    with engine.connect().execution_options(isolation_level="REPEATABLE READ") as conn:
+        yield conn
 
 
-def fetch_one(engine: Engine, sql: str, params: Mapping[str, Any] | None = None) -> Mapping[str, Any] | None:
-    with engine.connect() as conn:
-        return conn.execute(text(sql), dict(params or {})).mappings().first()
+def fetch_all(conn: Connection, sql: str, params: Mapping[str, Any] | None = None) -> Sequence[Mapping[str, Any]]:
+    return conn.execute(text(sql), dict(params or {})).mappings().all()
+
+
+def fetch_one(conn: Connection, sql: str, params: Mapping[str, Any] | None = None) -> Mapping[str, Any] | None:
+    return conn.execute(text(sql), dict(params or {})).mappings().first()

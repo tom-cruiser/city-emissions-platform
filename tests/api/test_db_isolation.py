@@ -5,7 +5,6 @@ These use the API's own engine (api.db.make_engine), not a separate connection, 
 test what the API actually does."""
 
 import re
-from pathlib import Path
 
 import psycopg
 import pytest

@@ -18,10 +18,10 @@ from tests.conftest import TEST_DB
 
 
 def _settings(**overrides) -> ApiSettings:
-    values = dict(
-        db_host=TEST_DB.pghost, db_port=TEST_DB.postgres_port, db_name=TEST_DB.test_postgres_db,
-        db_user=TEST_DB.test_api_reader_user, db_password=TEST_DB.test_api_reader_password,
-    )
+    values = {
+        "db_host": TEST_DB.pghost, "db_port": TEST_DB.postgres_port, "db_name": TEST_DB.test_postgres_db,
+        "db_user": TEST_DB.test_api_reader_user, "db_password": TEST_DB.test_api_reader_password,
+    }
     values.update(overrides)
     return ApiSettings(**values)
 
