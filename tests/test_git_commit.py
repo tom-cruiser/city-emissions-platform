@@ -26,3 +26,12 @@ def test_defaults_to_head():
 
 def test_dbt_build_script_uses_it():
     assert "scripts/git-commit.sh" in (REPO_ROOT / "scripts" / "dbt-build.sh").read_text()
+
+
+def test_dagster_uses_it(monkeypatch):
+    from orchestration.resources import git_commit
+
+    monkeypatch.delenv("GIT_COMMIT", raising=False)
+    assert git_commit() == run()
+    monkeypatch.setenv("GIT_COMMIT", "0123abc")
+    assert git_commit() == "0123abc"
