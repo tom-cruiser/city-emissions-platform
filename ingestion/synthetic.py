@@ -14,10 +14,16 @@ What it includes on purpose, so later stages can test their handling:
 - an urban centre that is not in the crosswalk at all, which modelling must drop;
 - a sector that is zero in every year, as happens in the real data.
 
-A second file, the REVISED fixture, is the same release re-published with a few values
-corrected (REVISIONS below), the way a real source silently fixes a file under the same
-name. Loaded after the first one, it becomes a second dataset version of EDGAR v2024, so the
-revisions models have something to compare. Every other byte of content is the same.
+Two more files re-publish the same release, the way a real source silently fixes a file
+under the same name. Loaded in order they are three dataset versions of EDGAR v2024, so the
+revisions models see every kind of revision for a crosswalk city:
+
+  original -> revised    the REVISIONS cells change ('changed'), and Dakar's row is
+                         missing ('removed': a source dropping an urban centre)
+  revised  -> restored   Dakar's row is back, values as in the original ('added')
+
+The last one loaded (restored) is current and covers every crosswalk city, so the models
+built on the current version are unaffected. Every other cell is the same in all three.
 
 Regenerate both with:  python -m ingestion make-synthetic
 """
@@ -25,6 +31,7 @@ Regenerate both with:  python -m ingestion make-synthetic
 import random
 import re
 import zipfile
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -45,10 +52,9 @@ LICENSE = (
     "structure mirrors EDGAR v2024 urban areas; all emission values are invented."
 )
 
-# The REVISED fixture: a later re-publication of the same release with corrected cells.
+# Re-publications of the same release (see the module docstring). Load order = this order.
 REVISED_FILENAME = "EDGAR_emiss_on_UCDB_2024_SYNTHETIC_REVISED.xlsx"
-REVISED_GENERATED_AT = datetime(2026, 11, 6, tzinfo=UTC)  # after GENERATED_AT: loaded second
-REVISED_LICENSE = LICENSE.replace("(seed", "(REVISED fixture, seed")
+RESTORED_FILENAME = "EDGAR_emiss_on_UCDB_2024_SYNTHETIC_REVISED_2.xlsx"
 # (urban-centre ID, sector, year) -> factor applied to that cell, and the pollutants it
 # applies to. CO2 and GHG are always scaled together so total GHG stays >= CO2. Mirrored
 # in transform/tests/assert_revisions_known_changes.sql, which requires exactly these
@@ -90,6 +96,7 @@ EXTRA_URBAN_CENTRES = [
     (NOT_IN_CROSSWALK_ID, "Synthetic Town", "Testland"),
 ]
 ZERO_SECTOR = (295, "Energy")  # every pollutant, every year = 0
+REMOVED_UC_ID = 39  # Dakar: missing from the revised file only, back in the restored one
 REVISIONS = [
     (597, "Transport", 2022, ("CO2", "GWP_100_AR5_GHG"), 1.25),   # Kigali, revised up
     (1717, "Energy", 1990, ("CO2", "GWP_100_AR5_GHG"), 0.8),      # Nairobi, revised down
@@ -137,10 +144,29 @@ def _apply_revisions(row: list) -> list:
     return row
 
 
-def write_synthetic_edgar(path: Path, revised: bool = False) -> int:
-    """Write the synthetic fixture, or with revised=True its corrected re-publication."""
-    rng = random.Random(SEED)  # same draws either way: the revised file differs only in REVISIONS
-    generated_at = REVISED_GENERATED_AT if revised else GENERATED_AT
+@dataclass(frozen=True)
+class Variant:
+    filename: str
+    generated_at: datetime  # also orders the manifest, so it is the load order
+    apply_revisions: bool
+    drop_uc_id: int | None
+    note: str | None
+
+
+VARIANTS = {
+    "original": Variant(FILENAME, GENERATED_AT, False, None, None),
+    "revised": Variant(REVISED_FILENAME, datetime(2026, 11, 6, tzinfo=UTC), True, REMOVED_UC_ID,
+                       "REVISED: the cells in synthetic.REVISIONS corrected; Dakar (39) missing."),
+    "restored": Variant(RESTORED_FILENAME, datetime(2026, 11, 7, tzinfo=UTC), True, None,
+                        "REVISED 2: as REVISED, with Dakar (39) back as in the original."),
+}
+
+
+def write_synthetic_edgar(path: Path, variant: str = "original") -> int:
+    """Write the synthetic fixture (original) or one of its re-publications (VARIANTS)."""
+    v = VARIANTS[variant]
+    rng = random.Random(SEED)  # same draws for every variant: they differ only as listed above
+    generated_at = v.generated_at
     wb = Workbook()
     wb.properties.created = wb.properties.modified = generated_at.replace(tzinfo=None)
 
@@ -153,8 +179,8 @@ def write_synthetic_edgar(path: Path, revised: bool = False) -> int:
         "Every emission value is invented. Do not use it for any analysis.",
         "Real data: https://edgar.jrc.ec.europa.eu/dataset_ucdb",
     ]
-    if revised:
-        lines.append("REVISED: same release with the cells in synthetic.REVISIONS corrected.")
+    if v.note:
+        lines.append(v.note)
     for line in lines:
         notice.append([line])
 
@@ -172,14 +198,18 @@ def write_synthetic_edgar(path: Path, revised: bool = False) -> int:
     data = wb.create_sheet(config.EDGAR_DATA_SHEET)
     data.append(header())
     rows = CROSSWALK_URBAN_CENTRES + EXTRA_URBAN_CENTRES
+    written = 0
     for uc_id, name, country in rows:
-        row = _row(rng, uc_id, name, country)
-        data.append(_apply_revisions(row) if revised else row)
+        row = _row(rng, uc_id, name, country)  # drawn even when dropped: later rows stay identical
+        if uc_id == v.drop_uc_id:
+            continue
+        data.append(_apply_revisions(row) if v.apply_revisions else row)
+        written += 1
 
     path.parent.mkdir(parents=True, exist_ok=True)
     wb.save(path)
     _fix_zip_timestamps(path, generated_at)
-    return len(rows)
+    return written
 
 
 def _fix_zip_timestamps(path: Path, generated_at: datetime = GENERATED_AT) -> None:
@@ -205,11 +235,12 @@ def _fix_zip_timestamps(path: Path, generated_at: datetime = GENERATED_AT) -> No
             dest.writestr(info, data)
 
 
-def manifest_entry(rel_path: str, rows: int, revised: bool = False) -> dict:
+def manifest_entry(rel_path: str, rows: int, variant: str = "original") -> dict:
+    v = VARIANTS[variant]
+    license_ = LICENSE if variant == "original" else LICENSE.replace("(seed", f"({variant} re-publication, seed")
     return {
         "source_name": config.EDGAR_SOURCE_NAME, "source_key": config.EDGAR_SOURCE_KEY,
         "origin": "synthetic", "path": rel_path, "rows": rows,
-        "source_url": SOURCE_URL, "license": REVISED_LICENSE if revised else LICENSE,
-        "upstream_sha256": None,
-        "generated_at": (REVISED_GENERATED_AT if revised else GENERATED_AT).isoformat(),
+        "source_url": SOURCE_URL, "license": license_,
+        "upstream_sha256": None, "generated_at": v.generated_at.isoformat(),
     }

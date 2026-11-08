@@ -56,9 +56,12 @@ data through a read-only FastAPI service.
 2. ✅ **Snapshots** of the crosswalk and the sector map, both edited in place, with a
    `pg_dump` backup because they cannot be rebuilt. See [Snapshots](#snapshots).
 3. ✅ **Revisions** between EDGAR versions, modelled by comparing dataset versions
-   (`city_emission_revisions`). Tested on `warehouse_test` with a second, *revised*
-   synthetic EDGAR file; empty on the real warehouse until a second EDGAR version exists.
+   (`city_emission_revisions`). Tested on `warehouse_test` with three synthetic EDGAR
+   versions that produce `changed`, `removed` and `added` cells; empty on the real
+   warehouse until a second EDGAR version exists.
    See [Revisions between EDGAR versions](#revisions-between-edgar-versions).
+4. ✅ **One build command**, `scripts/dbt-build.sh`, which sets `GIT_COMMIT` from git for
+   the snapshots. Local runs, CI and Dagster all call it.
 
 ## Architecture (current)
 
@@ -163,13 +166,21 @@ docker compose up -d --wait          # PostGIS on 127.0.0.1:5434 (warehouse + wa
 uv sync                              # Python 3.12 environment from uv.lock
 
 uv run python -m ingestion load --mode download                # real files into warehouse (~25 MB EDGAR, ~70 MB boundaries, 277 MB GHS-UCDB)
-uv run python -m ingestion load --mode sample --target test    # offline: 2 synthetic EDGAR versions + real extracts into warehouse_test
+uv run python -m ingestion load --mode sample --target test    # offline: 3 synthetic EDGAR versions + real extracts into warehouse_test
 uv run pytest -q                                               # runs against warehouse_test only
 
-# dbt (Stage 3). --env-file passes .env to dbt; profiles.yml holds no secrets.
-uv run --env-file .env dbt build --project-dir transform --profiles-dir transform               # warehouse (download data)
-uv run --env-file .env dbt build --project-dir transform --profiles-dir transform --target test # warehouse_test (sample)
+# dbt: always through the build script (sets GIT_COMMIT for the snapshots, reads .env).
+scripts/dbt-build.sh             # warehouse (download data)
+scripts/dbt-build.sh test        # warehouse_test (sample); run before pytest
+scripts/dbt-build.sh test --select cities+   # extra arguments go to dbt build
 ```
+
+`scripts/dbt-build.sh` is the only supported way to run `dbt build`; CI (Stage 7) and
+Dagster (Stage 5) call the same script. It sets `GIT_COMMIT` to the HEAD commit, with
+`-dirty` when tracked files have uncommitted changes, unless `GIT_COMMIT` is already set
+(CI, Docker images without `.git`). It passes `.env` to dbt when present, and profiles.yml
+holds no secrets. Other dbt commands (`parse`, `test`, `docs`) can still be run directly with
+`uv run --env-file .env dbt <command> --project-dir transform --profiles-dir transform`.
 
 A full `dbt build` on the real warehouse takes about 40 s (2.24M emission rows).
 
@@ -244,11 +255,13 @@ transform/                  dbt project (Stage 3)
   tests/                    generic tests (no packages) + singular tests
 data/sample/                committed offline sample + manifest.json
   edgar/…_SYNTHETIC.xlsx    invented values, real structure
-  edgar/…_SYNTHETIC_REVISED.xlsx   the same, re-published with known corrections (2nd version)
+  edgar/…_SYNTHETIC_REVISED.xlsx     2nd version: known corrections, Dakar's row missing
+  edgar/…_SYNTHETIC_REVISED_2.xlsx   3rd version (current): Dakar back
   geoboundaries/            real polygons for the 25 cities, unmodified
   ghs_ucdb/…_crosswalk_cities.gpkg   the 25 crosswalk urban centres, one layer (160 KB)
 data/raw/                   full downloads (git-ignored), named <sha256-prefix>_<file>
 backups/                    snapshot backups from pg_dump (git-ignored)
+scripts/dbt-build.sh        the one dbt build command (sets GIT_COMMIT); used locally, in CI, by Dagster
 tests/                      pytest against warehouse_test: unit + rolled-back integration tests
   transform/                rules on the parsed dbt project; api reader access after dbt build
 orchestration/              Dagster (Stage 5)
@@ -319,10 +332,22 @@ from. Each file is loaded with the same loader as the real data.
 The urban-centre IDs and names in it are real. They come from the GHS Urban Centre
 Database (CC BY 4.0) and are needed to match the crosswalk.
 
-**The revised fixture.** `…_SYNTHETIC_REVISED.xlsx` is the same release re-published with a
-few cells corrected (`synthetic.REVISIONS`), the way a source can silently fix a file
-under the same name. It is generated from the same random draws, so it differs *only* in
-those cells (`test_revised_fixture_differs_only_in_the_listed_cells`):
+**Re-published versions.** Two more files re-publish the same release, the way a source
+can silently fix a file under the same name. Loaded in order, they make three dataset
+versions of EDGAR `v2024`, which together produce every kind of revision for a crosswalk
+city (`synthetic.VARIANTS`):
+
+| Version | File | Compared with the previous one |
+|---|---|---|
+| 1 | `…_SYNTHETIC.xlsx` | (the original) |
+| 2 | `…_SYNTHETIC_REVISED.xlsx` | the cells below **changed**; Dakar's row **removed** |
+| 3, current | `…_SYNTHETIC_REVISED_2.xlsx` | Dakar's row **added** back, values as in version 1 |
+
+The removal happens in a non-current version on purpose. If a crosswalk city were
+missing from the current version, the build would fail (correctly), and a row outside the
+crosswalk would never reach `city_emission_revisions`. All three are generated from the same
+random draws, so they differ *only* as listed (`test_republications_differ_only_as_documented`).
+The corrected cells are:
 
 | Urban centre | Sector, year | Pollutants | Factor |
 |---|---|---|---|
@@ -331,9 +356,8 @@ those cells (`test_revised_fixture_differs_only_in_the_listed_cells`):
 | Lagos (1289) | Residential 2015 | PM2.5 | ×1.5 |
 | Synthetic Town (990002, not in the crosswalk) | Waste 2020 | CO2 and GHG | ×2 |
 
-CO2 and GHG are scaled together, so GHG ≥ CO2 still holds. The manifest lists it after the
-original with a later `generated_at`, and the sample load runs in manifest order. So
-`warehouse_test` holds two dataset versions of EDGAR `v2024`, and the revised one is current.
+CO2 and GHG are scaled together, so GHG ≥ CO2 still holds. The manifest orders the files
+by `generated_at` and the sample load runs in manifest order, so version 3 is current.
 
 ## GHS-UCDB urban centres
 
@@ -426,7 +450,7 @@ per-file transactions nest inside it as savepoints, so nothing a test writes is 
 committed. (An earlier version of the fixture lacked this and committed for real. On an
 idle connection, psycopg's `conn.transaction()` *is* the outermost transaction.)
 
-`tests/transform/` covers the dbt project. Run it **after** `dbt build --target test`:
+`tests/transform/` covers the dbt project. Run it **after** `scripts/dbt-build.sh test`:
 
 - `test_reporting_access.py` connects as `test_api_reader`, the way the API will, and
   reads every reporting table (non-empty), and is refused on `raw` and `modelled`.
@@ -625,12 +649,19 @@ in load order. `tests/transform/test_reporting_manifest.py` lists those two colu
 only exemptions. It fails if one of them gains the current-version test, or if any other
 version column lacks it.
 
-**Tested with real changes.** On `warehouse_test`, `assert_revisions_known_changes` (test
-target only) requires exactly the five crosswalk cells of the revised fixture, with their
-factors, and nothing else. The ×2 change to the non-crosswalk urban centre must not appear.
-Changing one expected factor made it fail. `added`/`removed` follow from the same full
-join but have no fixture yet. On the real warehouse the table is empty until a second
-EDGAR version is loaded.
+**Tested with real changes.** On `warehouse_test` (389 rows), `assert_revisions_known_changes`
+(test target only) requires exactly the following, and nothing else:
+
+| Pair | `revision_type` | Cells |
+|---|---|---|
+| version 1 → 2 | `changed` | the five crosswalk cells, with their factors |
+| version 1 → 2 | `removed` | every cell of Dakar (192) |
+| version 2 → 3 | `added` | every cell of Dakar (192), equal to the removed values cell for cell |
+
+The ×2 change to the non-crosswalk urban centre must not appear. Each branch was checked
+to fail: a wrong expected factor, `removed` expected for the wrong city (192 failures), and
+one corrupted `added` value (1 failure). On the real warehouse the table is empty until a
+second EDGAR version is loaded.
 
 ## Snapshots
 
@@ -654,11 +685,9 @@ Both use the `check` strategy on the columns that define the match or the mappin
 
 `hard_deletes = new_record` records a removed city or sector as a row with
 `dbt_is_deleted = True` (it copies the last known values). `git_commit` holds the commit
-the run was built from when the caller sets it, and is recorded, not compared:
-
-```bash
-GIT_COMMIT=$(git rev-parse HEAD) uv run --env-file .env dbt build --project-dir transform --profiles-dir transform
-```
+the run was built from, with `-dirty` if the working tree had uncommitted changes. It is
+recorded, not compared, and set automatically by `scripts/dbt-build.sh` (see
+[Quick start](#quick-start)). A `dbt build` run some other way records `unknown`.
 
 Tests: at most one current row per key, and the current rows equal the seeds on every
 tracked column (`assert_snapshots_match_seeds`). Checked on `warehouse_test` by editing
@@ -847,7 +876,8 @@ fetched from a commit-pinned GitHub URL, recorded in `raw.dataset_versions.sourc
 
 ## Next steps
 
-Stage 5: Dagster orchestration. It runs ingestion, the snapshot backup, then `dbt build`
-with `GIT_COMMIT` set, as one job. The reporting layer stays as built in Stage 4:
+Stage 6: the FastAPI service over `reporting`, before Dagster, since reporting was designed
+backwards from the endpoints. Then Stage 5: Dagster runs ingestion, the snapshot backup,
+then `scripts/dbt-build.sh`, as one job. The reporting layer stays as built in Stage 4:
 `needs_review` cities (Accra, Buenos Aires) are included with their flags, never left out,
 and mixed GPC sectors are shown under their EDGAR name (ADR 0002).

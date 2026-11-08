@@ -8,7 +8,6 @@ from ingestion.edgar import SourceFormatError, read_edgar_workbook
 from ingestion.geoboundaries import read_features
 
 EDGAR_FIXTURE = SAMPLE_DIR / "edgar" / synthetic.FILENAME
-EDGAR_REVISED_FIXTURE = SAMPLE_DIR / "edgar" / synthetic.REVISED_FILENAME
 
 
 def test_crosswalk_keys_are_unique():
@@ -91,32 +90,45 @@ def test_synthetic_generation_is_reproducible(tmp_path):
     assert a.read_bytes() == b.read_bytes() == EDGAR_FIXTURE.read_bytes()
 
 
-def test_revised_synthetic_generation_is_reproducible(tmp_path):
+@pytest.mark.parametrize("variant", ["revised", "restored"])
+def test_republished_synthetic_generation_is_reproducible(tmp_path, variant):
     a = tmp_path / "a.xlsx"
-    synthetic.write_synthetic_edgar(a, revised=True)
-    assert a.read_bytes() == EDGAR_REVISED_FIXTURE.read_bytes()
+    synthetic.write_synthetic_edgar(a, variant=variant)
+    assert a.read_bytes() == (SAMPLE_DIR / "edgar" / synthetic.VARIANTS[variant].filename).read_bytes()
     assert a.read_bytes() != EDGAR_FIXTURE.read_bytes()
 
 
-def test_revised_fixture_differs_only_in_the_listed_cells():
-    base = {r["ID_UC_G0"]: r for r in read_edgar_workbook(EDGAR_FIXTURE)[1]}
-    revised = {r["ID_UC_G0"]: r for r in read_edgar_workbook(EDGAR_REVISED_FIXTURE)[1]}
-    assert base.keys() == revised.keys()
+def _edgar_rows(variant: str) -> dict[int, dict]:
+    path = SAMPLE_DIR / "edgar" / synthetic.VARIANTS[variant].filename
+    return {r["ID_UC_G0"]: r for r in read_edgar_workbook(path)[1]}
 
+
+def _changed_cells(a: dict, b: dict) -> dict:
+    return {(uc, col): (a[uc][col], b[uc][col]) for uc in a.keys() & b.keys()
+            for col in a[uc] if a[uc][col] != b[uc][col]}
+
+
+def test_republications_differ_only_as_documented():
+    original, revised, restored = (_edgar_rows(v) for v in ("original", "revised", "restored"))
+
+    # original -> revised: Dakar's row removed; the REVISIONS cells changed, nothing else.
+    assert original.keys() - revised.keys() == {synthetic.REMOVED_UC_ID}
+    assert revised.keys() <= original.keys()
     expected = {
         (uc_id, f"EMI_{p}_{sector}_{year}"): factor
         for uc_id, sector, year, pollutants, factor in synthetic.REVISIONS
         for p in pollutants
     }
-    changed = {
-        (uc_id, col): (base[uc_id][col], revised[uc_id][col])
-        for uc_id in base
-        for col in base[uc_id]
-        if base[uc_id][col] != revised[uc_id][col]
-    }
+    changed = _changed_cells(original, revised)
     assert changed.keys() == expected.keys()
     for key, (old, new) in changed.items():
         assert new == pytest.approx(old * expected[key], rel=1e-9, abs=1e-6)
+
+    # revised -> restored: Dakar's row is back exactly as in the original; nothing else changes.
+    assert restored.keys() - revised.keys() == {synthetic.REMOVED_UC_ID}
+    assert restored.keys() == original.keys()
+    assert restored[synthetic.REMOVED_UC_ID] == original[synthetic.REMOVED_UC_ID]
+    assert _changed_cells(revised, restored) == {}
 
 
 def test_reads_geoboundaries_sample():

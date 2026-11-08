@@ -84,14 +84,14 @@ def make_boundary_sample(conn: psycopg.Connection) -> list[dict]:
 
 
 def make_synthetic_edgar() -> list[dict]:
-    """Write the synthetic EDGAR fixture and its REVISED re-publication (two versions of
-    v2024). Manifest order is load order: the revised file loads second, so it becomes the
-    current version and the revisions models compare the two."""
+    """Write the synthetic EDGAR fixture and its re-publications: three versions of v2024
+    (synthetic.VARIANTS). Manifest order is load order (by generated_at), so the last one
+    becomes the current version and the revisions models compare consecutive pairs."""
     entries = []
-    for revised, name in ((False, synthetic.FILENAME), (True, synthetic.REVISED_FILENAME)):
-        rel = f"edgar/{name}"
-        rows = synthetic.write_synthetic_edgar(config.SAMPLE_DIR / rel, revised=revised)
-        entries.append(synthetic.manifest_entry(rel, rows, revised=revised))
+    for variant, v in synthetic.VARIANTS.items():
+        rel = f"edgar/{v.filename}"
+        rows = synthetic.write_synthetic_edgar(config.SAMPLE_DIR / rel, variant=variant)
+        entries.append(synthetic.manifest_entry(rel, rows, variant=variant))
     _update_manifest(config.EDGAR_SOURCE_NAME, entries)
     return entries
 
