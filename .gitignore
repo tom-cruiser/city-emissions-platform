@@ -17,6 +17,10 @@ transform/logs/
 orchestration/.dagster_home/
 .dagster_home/
 
+# Snapshot backups (pg_dump): they hold the only copy of the snapshot history, so keep
+# them somewhere safer than the repo checkout as well. See README "Snapshots".
+backups/
+
 # Downloaded raw files (the small committed sample lives in data/sample/)
 data/raw/
 

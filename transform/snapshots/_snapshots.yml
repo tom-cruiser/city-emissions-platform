@@ -1,0 +1,30 @@
+version: 2
+
+snapshots:
+  - name: snap_city_crosswalk
+    description: >
+      SCD2 history of seed city_crosswalk: one row per city per version of its match.
+      Current rows have dbt_valid_to null. Cannot be rebuilt from raw: back up (README).
+    columns:
+      - name: city_id
+        data_tests:
+          - not_null
+          - unique:
+              config: {where: "dbt_valid_to is null"}
+              description: At most one current row per city.
+      - name: dbt_valid_from
+        data_tests: [not_null]
+
+  - name: snap_edgar_sector_map
+    description: >
+      SCD2 history of seed edgar_sector_map (ADR 0002): one row per EDGAR sector per
+      version of its mapping. Cannot be rebuilt from raw: back up (README).
+    columns:
+      - name: edgar_sector
+        data_tests:
+          - not_null
+          - unique:
+              config: {where: "dbt_valid_to is null"}
+              description: At most one current row per sector.
+      - name: dbt_valid_from
+        data_tests: [not_null]

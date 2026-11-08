@@ -53,7 +53,8 @@ data through a read-only FastAPI service.
    as the emissions of the city's *urban centre* and carries its overlap, flags, review
    status and dataset versions. `api_reader` is tested to read every one after a rebuild.
    See [Reporting layer (dbt)](#reporting-layer-dbt).
-2. ⏳ **Snapshots** of the crosswalk and the sector map.
+2. ✅ **Snapshots** of the crosswalk and the sector map, both edited in place, with a
+   `pg_dump` backup because they cannot be rebuilt. See [Snapshots](#snapshots).
 3. ⏳ **Revisions** between EDGAR versions.
 
 ## Architecture (current)
@@ -199,6 +200,11 @@ docker compose exec db psql -U climate -d warehouse -c \
 `docker compose down -v` deletes the database volume. The init scripts in `db/init/`
 only run against an empty volume.
 
+> ⚠️ **Back up the snapshots before `docker compose down -v`.** Everything else in the
+> database can be rebuilt (ingestion from the source files, dbt from `raw`), but the dbt
+> snapshot tables hold history that exists nowhere else. Run the backup command in
+> [Snapshots](#snapshots) first.
+
 ## Project layout
 
 ```
@@ -228,6 +234,7 @@ transform/                  dbt project (Stage 3)
   models/modelled/          dim_city, fct_urban_centre_emissions, fct_city_emissions, city_territory_overlap
   models/reporting/         what the API serves: cities, city_emissions, city_emissions_trend,
                             city_boundaries, city_overlap, dataset_versions (contracts enforced)
+  snapshots/                snap_city_crosswalk, snap_edgar_sector_map (history of seeds edited in place)
   macros/                   raw_origins (guard), repair_mojibake, overlap_metrics, change_pct, schema naming
   tests/                    generic tests (no packages) + singular tests
 data/sample/                committed offline sample + manifest.json
@@ -235,6 +242,7 @@ data/sample/                committed offline sample + manifest.json
   geoboundaries/            real polygons for the 25 cities, unmodified
   ghs_ucdb/…_crosswalk_cities.gpkg   the 25 crosswalk urban centres, one layer (160 KB)
 data/raw/                   full downloads (git-ignored), named <sha256-prefix>_<file>
+backups/                    snapshot backups from pg_dump (git-ignored)
 tests/                      pytest against warehouse_test: unit + rolled-back integration tests
   transform/                rules on the parsed dbt project; api reader access after dbt build
 orchestration/              Dagster (Stage 5)
@@ -426,8 +434,8 @@ carries the `dataset_version_id` of the raw file it came from.
 | `fct_city_emissions` | city × pollutant × EDGAR sector × year, **current EDGAR version only** (4,800 rows) | table | what later stages read |
 | `city_territory_overlap` | a crosswalk city | table | geometry operations |
 
-Nothing is incremental: a full rebuild takes ~40 s, and history comes from dataset
-versions now and dbt snapshots in Stage 4.
+Nothing is incremental: a full rebuild takes ~40 s. History comes from dataset versions
+(sources) and dbt snapshots (seeds edited in place): see [Snapshots](#snapshots).
 
 **Which raw version is modelled.** `stg_raw__current_versions` picks, per source file,
 the most recently loaded version among the allowed origins: `download` on the warehouse,
@@ -566,6 +574,66 @@ its source (`tests/generic/is_current_version.sql`). Plus:
 
 The access test was checked by revoking `SELECT` on one table: the test failed, and
 rebuilding that table restored the grant through the default privileges.
+
+## Snapshots
+
+**Where history comes from.** Two kinds of change, two mechanisms:
+
+| What changes | How it is recorded | Why |
+|---|---|---|
+| Source data (EDGAR, GHS-UCDB, geoBoundaries) | a new `raw.dataset_versions` row; `raw` is append-only | rebuildable from `raw` at any time; captures every release even if two are loaded between dbt runs |
+| The crosswalk and the sector map (seeds, **edited in place**) | dbt snapshots `snap_city_crosswalk`, `snap_edgar_sector_map` in `modelled` | git records *who changed what and why*; the snapshot records *when it went live in this warehouse*, queryable in SQL |
+
+The sector map needs a snapshot as much as the crosswalk does: changing it relabels every
+reported figure (`gpc_sector`, `mapping_quality`) while `edgar_version_id` stays the same,
+so comparing dataset versions cannot see it. Emissions are not snapshotted: that would
+duplicate `raw` and miss any version loaded between two runs.
+
+Both use the `check` strategy on the columns that define the match or the mapping:
+
+- crosswalk: `edgar_uc_id`, `gb_shape_id`, `gb_adm_level`, `gb_shape_name`,
+  `review_status`, `match_note`, `official_area_km2`
+- sector map: `gpc_sector_code`, `gpc_sector`, `mapping_quality`, `review_status`, `note`
+
+`hard_deletes = new_record` records a removed city or sector as a row with
+`dbt_is_deleted = True` (it copies the last known values). `git_commit` holds the commit
+the run was built from when the caller sets it, and is recorded, not compared:
+
+```bash
+GIT_COMMIT=$(git rev-parse HEAD) uv run --env-file .env dbt build --project-dir transform --profiles-dir transform
+```
+
+Tests: at most one current row per key, and the current rows equal the seeds on every
+tracked column (`assert_snapshots_match_seeds`). Checked on `warehouse_test` by editing
+Kigali's note and deleting the Waste sector, then reverting. Each step gave one new row,
+the deletion gave a `dbt_is_deleted` row, and the revert gave a third current row.
+
+### Back up the snapshots: they cannot be rebuilt
+
+Every other table comes back from the source files and `raw`. **Snapshot history does
+not.** `docker compose down -v` (or a lost volume) deletes it for good. `dbt build
+--full-refresh` does not touch snapshots (checked), but dropping the volume does.
+
+Back up (custom format, both snapshot tables, owner and grants included):
+
+```bash
+mkdir -p backups
+docker compose exec -T db pg_dump -U climate -d warehouse --format=custom \
+  --table='modelled.snap_*' > backups/snapshots_$(date +%Y%m%dT%H%M%S).dump
+```
+
+Restore into a new volume **before the first `dbt build`**, so dbt continues the history
+instead of starting a new one:
+
+```bash
+docker compose exec -T db pg_restore -U climate -d warehouse --clean --if-exists \
+  < backups/snapshots_<timestamp>.dump
+```
+
+Round trip checked on `warehouse_test`: dump, drop both tables, restore. The contents
+were identical by checksum, the owner was still the pipeline role, and the next `dbt snapshot`
+added no rows. `backups/` is git-ignored; copy the files somewhere off the machine too.
+Planned for Stage 5: Dagster runs the backup automatically before each build.
 
 ## City matching (crosswalk)
 
