@@ -1,0 +1,432 @@
+version: 2
+
+# Reporting layer: what the API serves, and the only schema api_reader can read.
+# Every model: table, contract enforced (dbt_project.yml), descriptions persisted as
+# Postgres COMMENTs. Every emissions figure is labelled as the emissions of the city's
+# GHS URBAN CENTRE (territory_basis = ghs_urban_centre; column urban_centre_emissions),
+# not of its administrative boundary, and carries the overlap, flags and review status.
+#
+# Exact decimals are declared `pg_catalog.numeric`, i.e. Postgres numeric with no precision,
+# which stores every value exactly (EDGAR's figures must not be rounded). Same type as
+# `numeric`; spelled out because dbt warns on the bare word, assuming warehouses where an
+# unconstrained numeric is rounded to a default scale. Postgres is not one of them.
+#
+# Shared column definitions (YAML anchors). Every *_version_id column is not null, exists in
+# dataset_versions and is the CURRENT version of its source (is_current_version); a pytest
+# (tests/transform/test_reporting_manifest.py) fails if a reporting model forgets this.
+
+x-columns:
+  city_id: &city_id
+    name: city_id
+    data_type: text
+    description: Platform city ID, e.g. kigali-rwa (seed city_crosswalk).
+    constraints: [{type: not_null}]
+    data_tests:
+      - relationships:
+          arguments: {to: ref('cities'), field: city_id}
+  territory_basis: &territory_basis
+    name: territory_basis
+    data_type: text
+    description: >
+      Always ghs_urban_centre. EDGAR's emissions are those of the GHS urban centre, not of
+      the administrative boundary (ADR 0001).
+    data_tests:
+      - not_null
+      - accepted_values:
+          arguments: {values: [ghs_urban_centre]}
+  uc_id: &uc_id
+    name: uc_id
+    data_type: integer
+    description: GHS urban-centre ID (ID_UC_G0), the same in EDGAR and GHS-UCDB.
+    constraints: [{type: not_null}]
+  uc_share_inside_admin: &uc_share_inside_admin
+    name: uc_share_inside_admin
+    data_type: double precision
+    description: Share of the urban centre's area inside the administrative boundary (0-1). Basis of the overlap flags.
+    constraints: [{type: not_null}]
+  low_urban_overlap: &low_urban_overlap
+    name: low_urban_overlap
+    data_type: boolean
+    description: uc_share_inside_admin < min_urban_overlap (0.5). The figure describes a substantially different territory from the boundary.
+    constraints: [{type: not_null}]
+  suspected_crosswalk_error: &suspected_crosswalk_error
+    name: suspected_crosswalk_error
+    data_type: boolean
+    description: uc_share_inside_admin < suspect_crosswalk_overlap (0.01). The city's match itself is probably wrong.
+    constraints: [{type: not_null}]
+  admin_area_mismatch: &admin_area_mismatch
+    name: admin_area_mismatch
+    data_type: boolean
+    description: >
+      The boundary polygon's geodesic area differs from the sourced official area by more
+      than admin_area_tolerance (0.25). False where no official area is sourced.
+    constraints: [{type: not_null}]
+  crosswalk_review_status: &crosswalk_review_status
+    name: crosswalk_review_status
+    data_type: text
+    description: "Review status of the city's match (seed city_crosswalk): accepted | needs_review."
+    constraints: [{type: not_null}]
+    data_tests:
+      - accepted_values:
+          arguments: {values: [accepted, needs_review]}
+  flags: &flags
+    name: flags
+    data_type: text[]
+    description: >
+      Names of the flags that are set: low_urban_overlap, suspected_crosswalk_error,
+      admin_area_mismatch, crosswalk_needs_review. Empty when none is.
+    constraints: [{type: not_null}]
+  edgar_version_id: &edgar_version_id
+    name: edgar_version_id
+    data_type: bigint
+    description: The EDGAR dataset version the emissions come from (dataset_versions).
+    data_tests: &current_edgar
+      - relationships:
+          arguments: {to: ref('dataset_versions'), field: dataset_version_id}
+      - is_current_version:
+          arguments: {source_name: edgar_ucdb}
+  ucdb_version_id: &ucdb_version_id
+    name: ucdb_version_id
+    data_type: bigint
+    description: The GHS-UCDB dataset version the urban-centre polygon (and so the overlap) comes from.
+    data_tests:
+      - relationships:
+          arguments: {to: ref('dataset_versions'), field: dataset_version_id}
+      - is_current_version:
+          arguments: {source_name: ghs_ucdb}
+  gb_version_id: &gb_version_id
+    name: gb_version_id
+    data_type: bigint
+    description: The geoBoundaries dataset version (one country file) the boundary comes from.
+    data_tests:
+      - relationships:
+          arguments: {to: ref('dataset_versions'), field: dataset_version_id}
+      - is_current_version:
+          arguments: {source_name: geoboundaries}
+
+models:
+  - name: cities
+    description: >
+      GET /cities. Grain: one row per crosswalk city. The city's match to a GHS urban centre
+      and a geoBoundaries shape, its review status and flags, the years covered, and the
+      latest GHG total of the city's URBAN CENTRE.
+    data_tests:
+      - row_count_matches:
+          arguments: {compare_model: ref('dim_city')}
+    columns:
+      - name: city_id
+        data_type: text
+        description: Platform city ID, e.g. kigali-rwa.
+        constraints: [{type: not_null}, {type: primary_key}]
+        data_tests: [unique, not_null]
+      - {name: city_name, data_type: text, constraints: [{type: not_null}]}
+      - {name: country_iso3, data_type: text, constraints: [{type: not_null}]}
+      - *uc_id
+      - {name: edgar_uc_name, data_type: text, description: The urban centre's name in EDGAR (encoding repaired).}
+      - {name: gb_adm_level, data_type: text, description: geoBoundaries administrative level of the boundary (ADM1, ADM2).}
+      - {name: gb_shape_id, data_type: text, constraints: [{type: not_null}]}
+      - {name: gb_shape_name, data_type: text}
+      - *territory_basis
+      - {name: first_year, data_type: integer, constraints: [{type: not_null}]}
+      - {name: last_year, data_type: integer, constraints: [{type: not_null}]}
+      - name: latest_urban_centre_ghg_t_co2e
+        data_type: pg_catalog.numeric
+        description: >
+          Total GHG (t CO2e/yr, GWP100 AR5) of the city's GHS URBAN CENTRE in last_year, all
+          EDGAR sectors. Not the emissions inside the administrative boundary.
+        constraints: [{type: not_null}]
+      - *uc_share_inside_admin
+      - *low_urban_overlap
+      - *suspected_crosswalk_error
+      - *admin_area_mismatch
+      - *crosswalk_review_status
+      - {name: match_note, data_type: text, description: Why this unit was chosen and anything known to be wrong with it.}
+      - *flags
+      - *edgar_version_id
+      - *ucdb_version_id
+      - *gb_version_id
+
+  - name: city_emissions
+    description: >
+      GET /cities/{id}/emissions. Grain: one row per city x pollutant x EDGAR sector x year,
+      current EDGAR version. Emissions of the city's GHS URBAN CENTRE in the source's
+      tonnes per year. GPC columns are GPC-ALIGNED labels (ADR 0002), never summed into GPC
+      totals. Pollutants are never added together.
+    config:
+      indexes: [{columns: [city_id, pollutant_code, year]}]
+    constraints:
+      - {type: primary_key, columns: [city_id, pollutant_code, edgar_sector, year]}
+    data_tests:
+      - unique_combination:
+          arguments: {columns: [city_id, pollutant_code, edgar_sector, year]}
+      - row_count_matches:
+          arguments: {compare_model: ref('fct_city_emissions')}
+    columns:
+      - *city_id
+      - {name: pollutant_code, data_type: text, constraints: [{type: not_null}]}
+      - {name: edgar_sector, data_type: text, constraints: [{type: not_null}]}
+      - {name: year, data_type: integer, constraints: [{type: not_null}]}
+      - *territory_basis
+      - name: urban_centre_emissions
+        data_type: pg_catalog.numeric
+        description: Emissions of the city's GHS URBAN CENTRE from this sector in this year, in `unit`. As published by EDGAR.
+        constraints: [{type: not_null}, {type: check, expression: "urban_centre_emissions >= 0"}]
+      - {name: pollutant, data_type: text, constraints: [{type: not_null}]}
+      - {name: unit, data_type: text, constraints: [{type: not_null}]}
+      - {name: is_greenhouse_gas, data_type: boolean, constraints: [{type: not_null}]}
+      - name: is_ghg_total
+        data_type: boolean
+        description: True for the GHG total in CO2e, which already contains CO2. Never add it to CO2.
+        constraints: [{type: not_null}]
+      - {name: gpc_sector_code, data_type: text, constraints: [{type: not_null}]}
+      - {name: gpc_sector, data_type: text, constraints: [{type: not_null}]}
+      - name: mapping_quality
+        data_type: text
+        description: "How well the EDGAR sector maps to the GPC sector (ADR 0002): direct | approximate | mixed."
+        constraints: [{type: not_null}]
+        data_tests:
+          - accepted_values:
+              arguments: {values: [direct, approximate, mixed]}
+      - name: sector_mapping_review_status
+        data_type: text
+        description: "Review status of the EDGAR -> GPC mapping (seed edgar_sector_map): accepted | needs_review."
+        constraints: [{type: not_null}]
+        data_tests:
+          - accepted_values:
+              arguments: {values: [accepted, needs_review]}
+      - *uc_id
+      - *uc_share_inside_admin
+      - *low_urban_overlap
+      - *suspected_crosswalk_error
+      - *crosswalk_review_status
+      - *edgar_version_id
+      - *ucdb_version_id
+      - *gb_version_id
+
+  - name: city_emissions_trend
+    description: >
+      GET /cities/{id}/trend. Grain: one row per city x pollutant x year, all EDGAR sectors
+      summed, current EDGAR version. Emissions of the city's GHS URBAN CENTRE. Years are not
+      annual: prev_year is the previous AVAILABLE year, and annualised_change_pct makes
+      gaps of different length comparable. Nothing is interpolated.
+    constraints:
+      - {type: primary_key, columns: [city_id, pollutant_code, year]}
+    data_tests:
+      - unique_combination:
+          arguments: {columns: [city_id, pollutant_code, year]}
+      - expression_is_true:
+          description: The first year of a series has no previous point; every other year does, and it is earlier.
+          arguments:
+            expression: >
+              (prev_year is null) = (year = (select min(year) from {{ ref('city_emissions') }}))
+              and (prev_year is null or prev_year < year)
+    columns:
+      - *city_id
+      - {name: pollutant_code, data_type: text, constraints: [{type: not_null}]}
+      - {name: year, data_type: integer, constraints: [{type: not_null}]}
+      - *territory_basis
+      - name: urban_centre_emissions
+        data_type: pg_catalog.numeric
+        description: Emissions of the city's GHS URBAN CENTRE in this year, all EDGAR sectors, in `unit`.
+        constraints: [{type: not_null}, {type: check, expression: "urban_centre_emissions >= 0"}]
+      - {name: pollutant, data_type: text, constraints: [{type: not_null}]}
+      - {name: unit, data_type: text, constraints: [{type: not_null}]}
+      - {name: is_greenhouse_gas, data_type: boolean, constraints: [{type: not_null}]}
+      - {name: is_ghg_total, data_type: boolean, constraints: [{type: not_null}]}
+      - name: sector_count
+        data_type: integer
+        description: Number of EDGAR sectors summed. Equals the number of sectors in edgar_sector_map (tested).
+        constraints: [{type: not_null}]
+      - {name: prev_year, data_type: integer, description: Previous year with data for this city and pollutant. Null for the first.}
+      - {name: prev_urban_centre_emissions, data_type: pg_catalog.numeric}
+      - name: change_since_prev_pct
+        data_type: double precision
+        description: (urban_centre_emissions / prev_urban_centre_emissions - 1) x 100. Null when there is no previous point or it is 0.
+      - name: annualised_change_pct
+        data_type: double precision
+        description: Compound annual rate between prev_year and year, in percent. Null as change_since_prev_pct.
+      - *uc_id
+      - *uc_share_inside_admin
+      - *low_urban_overlap
+      - *suspected_crosswalk_error
+      - *crosswalk_review_status
+      - *edgar_version_id
+      - *ucdb_version_id
+      - *gb_version_id
+
+  - name: city_boundaries
+    description: >
+      GET /cities/{id}/boundary. Grain: one row per city. GeoJSON geometries (RFC 7946:
+      WGS84, counter-clockwise exterior rings, 6 decimals) of the administrative boundary
+      and of the GHS urban centre the emissions describe, with licences for attribution.
+    data_tests:
+      - row_count_matches:
+          arguments: {compare_model: ref('dim_city')}
+      - expression_is_true:
+          description: >
+            Both geometries are valid MultiPolygons with counter-clockwise exterior rings
+            (still valid after rounding to 6 decimals).
+          arguments:
+            expression: >
+              st_isvalid(st_geomfromgeojson(boundary_geojson::text))
+              and st_isvalid(st_geomfromgeojson(urban_centre_geojson::text))
+              and boundary_geojson ->> 'type' = 'MultiPolygon'
+              and urban_centre_geojson ->> 'type' = 'MultiPolygon'
+              and st_ispolygonccw(st_geomfromgeojson(boundary_geojson::text))
+              and st_ispolygonccw(st_geomfromgeojson(urban_centre_geojson::text))
+      - expression_is_true:
+          description: >
+            Rounding to 6 decimals keeps the boundary's area: the GeoJSON's geodesic area is
+            within 0.1% of admin_area_km2.
+          arguments:
+            expression: >
+              abs(st_area(st_setsrid(st_geomfromgeojson(boundary_geojson::text), 4326)::geography) / 1e6
+                  / admin_area_km2 - 1) < 1e-3
+      - expression_is_true:
+          description: >
+            bbox contains both geometries' bounding boxes (`~`, box containment: exact and
+            needs no valid topology, unlike ST_Covers on two overlapping shapes).
+          arguments:
+            expression: >
+              st_makeenvelope(bbox[1], bbox[2], bbox[3], bbox[4], 4326) ~ st_geomfromgeojson(boundary_geojson::text)
+              and st_makeenvelope(bbox[1], bbox[2], bbox[3], bbox[4], 4326) ~ st_geomfromgeojson(urban_centre_geojson::text)
+    columns:
+      - name: city_id
+        data_type: text
+        constraints: [{type: not_null}, {type: primary_key}]
+        data_tests:
+          - unique
+          - relationships:
+              arguments: {to: ref('cities'), field: city_id}
+      - {name: gb_shape_id, data_type: text, constraints: [{type: not_null}]}
+      - {name: gb_shape_name, data_type: text}
+      - {name: gb_adm_level, data_type: text}
+      - name: boundary_geojson
+        data_type: jsonb
+        description: GeoJSON geometry of the administrative boundary (geoBoundaries).
+        constraints: [{type: not_null}]
+      - name: urban_centre_geojson
+        data_type: jsonb
+        description: "GeoJSON geometry of the GHS urban centre: the territory the city's EDGAR emissions describe."
+        constraints: [{type: not_null}]
+      - name: bbox
+        data_type: double precision[]
+        description: "[west, south, east, north] in degrees, covering both geometries, rounded outward."
+        constraints: [{type: not_null}]
+      - {name: admin_area_km2, data_type: double precision, description: Geodesic area of the boundary polygon.}
+      - {name: official_area_km2, data_type: pg_catalog.numeric, description: Official area of the unit where sourced (seed city_crosswalk).}
+      - {name: admin_area_vs_official, data_type: double precision, description: admin_area_km2 / official_area_km2 - 1. Null without an official area.}
+      - *admin_area_mismatch
+      - name: boundary_license
+        data_type: text
+        description: Licence of the geoBoundaries file (varies by country). Attribution is required.
+        constraints: [{type: not_null}]
+      - {name: boundary_source_url, data_type: text, constraints: [{type: not_null}]}
+      - {name: urban_centre_license, data_type: text, constraints: [{type: not_null}]}
+      - *gb_version_id
+      - *ucdb_version_id
+
+  - name: city_overlap
+    description: >
+      GET /cities/{id}/overlap. Grain: one row per city. How far the city's GHS urban centre
+      (the territory of its EDGAR emissions) overlaps its administrative boundary, the flags
+      derived from that and from the boundary's area, and the thresholds used. Ratios in
+      World Mollweide, km2 geodesic (ADR 0001). The other reporting models take their flags
+      from here.
+    data_tests:
+      - row_count_matches:
+          arguments: {compare_model: ref('dim_city')}
+      - expression_is_true:
+          description: Each flag agrees with the threshold recorded on its own row.
+          arguments:
+            expression: >
+              low_urban_overlap = (uc_share_inside_admin < min_urban_overlap)
+              and suspected_crosswalk_error = (uc_share_inside_admin < suspect_crosswalk_overlap)
+              and admin_area_mismatch = coalesce(abs(admin_area_vs_official) > admin_area_tolerance, false)
+      - expression_is_true:
+          description: flags is empty exactly when no flag is set, and names each one that is.
+          arguments:
+            expression: >
+              ('low_urban_overlap' = any(flags)) = low_urban_overlap
+              and ('suspected_crosswalk_error' = any(flags)) = suspected_crosswalk_error
+              and ('admin_area_mismatch' = any(flags)) = admin_area_mismatch
+              and ('crosswalk_needs_review' = any(flags)) = (crosswalk_review_status = 'needs_review')
+              and (cardinality(flags) = 0) = not (low_urban_overlap or suspected_crosswalk_error
+                                                  or admin_area_mismatch or crosswalk_review_status = 'needs_review')
+    columns:
+      - name: city_id
+        data_type: text
+        constraints: [{type: not_null}, {type: primary_key}]
+        data_tests:
+          - unique
+          - relationships:
+              arguments: {to: ref('cities'), field: city_id}
+      - *uc_id
+      - *territory_basis
+      - *uc_share_inside_admin
+      - {name: admin_share_covered, data_type: double precision, description: Share of the boundary's area covered by the urban centre (0-1). Information only.}
+      - {name: iou, data_type: double precision, description: Intersection over union of the two areas. Information only.}
+      - {name: uc_area_km2, data_type: double precision, description: Geodesic area of the urban centre.}
+      - {name: admin_area_km2, data_type: double precision, description: Geodesic area of the boundary polygon.}
+      - {name: intersection_area_km2, data_type: double precision}
+      - {name: official_area_km2, data_type: pg_catalog.numeric}
+      - {name: admin_area_vs_official, data_type: double precision}
+      - *low_urban_overlap
+      - *suspected_crosswalk_error
+      - *admin_area_mismatch
+      - {name: min_urban_overlap, data_type: pg_catalog.numeric, description: Threshold used for low_urban_overlap (var min_urban_overlap).}
+      - {name: suspect_crosswalk_overlap, data_type: pg_catalog.numeric, description: Threshold used for suspected_crosswalk_error.}
+      - {name: admin_area_tolerance, data_type: pg_catalog.numeric, description: Threshold used for admin_area_mismatch.}
+      - *crosswalk_review_status
+      - {name: match_note, data_type: text, constraints: [{type: not_null}]}
+      - *flags
+      - *ucdb_version_id
+      - *gb_version_id
+
+  - name: dataset_versions
+    description: >
+      GET /datasets. Grain: one row per dataset version this target may read (downloads on
+      the warehouse; sample/synthetic only on *_test), current or not. The lineage every
+      *_version_id in reporting points at, with the load checks that warned.
+    data_tests:
+      - unique_combination:
+          config: {where: "is_current"}
+          arguments: {columns: [source_name, source_key]}
+      - expression_is_true:
+          description: Sample and synthetic versions never appear outside a *_test database.
+          arguments:
+            expression: "{{ 'true' if target.dbname.endswith('_test') else \"origin = 'download'\" }}"
+    columns:
+      - name: dataset_version_id
+        data_type: bigint
+        constraints: [{type: not_null}, {type: primary_key}]
+        data_tests: [unique]
+      - name: source_name
+        data_type: text
+        constraints: [{type: not_null}]
+        data_tests:
+          - accepted_values:
+              arguments: {values: [edgar_ucdb, geoboundaries, ghs_ucdb]}
+      - {name: source_key, data_type: text, constraints: [{type: not_null}]}
+      - name: origin
+        data_type: text
+        description: "download (real file) | sample (extract of a real file) | synthetic (invented values, tests only)."
+        constraints: [{type: not_null}]
+      - {name: is_current, data_type: boolean, description: True when reporting is built from this version., constraints: [{type: not_null}]}
+      - {name: source_url, data_type: text, constraints: [{type: not_null}]}
+      - name: file_sha256
+        data_type: character(64)
+        constraints: [{type: not_null}]
+        data_tests:
+          - expression_is_true:
+              arguments: {expression: "file_sha256 ~ '^[0-9a-f]{64}$'"}
+      - {name: upstream_sha256, data_type: character(64), description: For samples, the SHA-256 of the full file they were cut from.}
+      - {name: file_size_bytes, data_type: bigint}
+      - {name: license, data_type: text}
+      - {name: downloaded_at, data_type: timestamp with time zone, constraints: [{type: not_null}]}
+      - {name: loaded_at, data_type: timestamp with time zone, constraints: [{type: not_null}]}
+      - {name: row_count, data_type: integer, constraints: [{type: not_null}]}
+      - name: load_check_warnings
+        data_type: text[]
+        description: Names of the load checks that passed with a warning (raw.load_checks). Empty when none.
+        constraints: [{type: not_null}]

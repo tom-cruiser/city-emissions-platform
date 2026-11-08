@@ -29,12 +29,22 @@ class TestDbSettings(BaseSettings):
     test_postgres_db: str = "warehouse_test"
     test_pipeline_user: str = "test_pipeline"
     test_pipeline_password: str = ""
+    test_api_reader_user: str = "test_api_reader"
+    test_api_reader_password: str = ""
 
     @property
     def dsn(self) -> str:
         return (
             f"host={self.pghost} port={self.postgres_port} dbname={self.test_postgres_db} "
             f"user={self.test_pipeline_user} password={self.test_pipeline_password}"
+        )
+
+    @property
+    def reader_dsn(self) -> str:
+        """The API's read-only test role: SELECT on reporting only."""
+        return (
+            f"host={self.pghost} port={self.postgres_port} dbname={self.test_postgres_db} "
+            f"user={self.test_api_reader_user} password={self.test_api_reader_password}"
         )
 
 

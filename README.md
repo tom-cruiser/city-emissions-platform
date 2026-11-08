@@ -5,7 +5,7 @@ It ingests open emissions data and city boundaries, models them in layered
 PostgreSQL/PostGIS storage with dbt, orchestrates with Dagster, and serves curated
 data through a read-only FastAPI service.
 
-> **Status: work in progress.** Stages 1–3 are built; Stage 4 (reporting layer) is next.
+> **Status: work in progress.** Stages 1–3 are built; Stage 4 (reporting layer) is in progress.
 > See [Build status](#build-status). This README describes only what exists today and
 > marks everything planned as such.
 
@@ -16,7 +16,7 @@ data through a read-only FastAPI service.
 | 1 | Repo structure, Docker Compose, PostGIS, schemas and roles | ✅ Done |
 | 2 | Source verification, Python ingestion into `raw`, dataset versioning, load checks | ✅ Done |
 | 3 | dbt: modelled layer, seeds, tests | ✅ Done |
-| 4 | Reporting layer and dbt snapshots | ⏳ Planned |
+| 4 | Reporting layer and dbt snapshots | 🚧 In progress |
 | 5 | Dagster orchestration | ⏳ Planned |
 | 6 | FastAPI service and tests | ⏳ Planned |
 | 7 | GitHub Actions CI | ⏳ Planned |
@@ -45,6 +45,16 @@ data through a read-only FastAPI service.
    pending specialist review. Sectors are called *GPC-aligned*, never a *GPC inventory*.
 4. ✅ **Guard**: sample/synthetic data is refused by any database not named `*_test`, in
    ingestion and in dbt.
+
+**Stage 4 items**
+
+1. ✅ **Reporting layer**: 6 models in `reporting`, designed backwards from the API
+   endpoints, each a table with an enforced dbt contract. Every emissions figure is labelled
+   as the emissions of the city's *urban centre* and carries its overlap, flags, review
+   status and dataset versions. `api_reader` is tested to read every one after a rebuild.
+   See [Reporting layer (dbt)](#reporting-layer-dbt).
+2. ⏳ **Snapshots** of the crosswalk and the sector map.
+3. ⏳ **Revisions** between EDGAR versions.
 
 ## Architecture (current)
 
@@ -83,11 +93,13 @@ Dotted lines are planned.
 |---|---|---|---|
 | `raw` | Source data exactly as loaded, plus `dataset_versions`. Append-only. | `pipeline` role | `pipeline` |
 | `modelled` | dbt seeds, `stg_*` staging models, and the modelled layer (dims, facts, overlap) | `pipeline` | `pipeline` |
-| `reporting` | Aggregates the API serves (planned, dbt) | `pipeline` | `pipeline`, **`api_reader`** |
+| `reporting` | The tables the API serves (dbt, contract-enforced) | `pipeline` | `pipeline`, **`api_reader`** |
 
 The database enforces "the API never reads raw": `api_reader` has `SELECT` on
 `reporting` only, and gets `permission denied` on `raw`. `ALTER DEFAULT PRIVILEGES`
-keeps that grant on tables that dbt drops and recreates. See `db/init/01-init.sh`.
+keeps that grant on tables that dbt drops and recreates. See `db/init/lib/layers.sql`.
+That only works while dbt connects as `pipeline` (the role named in the default
+privileges), so every build checks it: `tests/assert_api_reader_can_read_reporting.sql`.
 
 ### Raw tables
 
@@ -214,7 +226,9 @@ transform/                  dbt project (Stage 3)
   seeds/                    city_crosswalk.csv (25 cities), edgar_sector_map.csv, edgar_pollutants.csv
   models/staging/           stg_* : one version per source, names repaired, geometry repaired
   models/modelled/          dim_city, fct_urban_centre_emissions, fct_city_emissions, city_territory_overlap
-  macros/                   raw_origins (guard), repair_mojibake, overlap_metrics, schema naming
+  models/reporting/         what the API serves: cities, city_emissions, city_emissions_trend,
+                            city_boundaries, city_overlap, dataset_versions (contracts enforced)
+  macros/                   raw_origins (guard), repair_mojibake, overlap_metrics, change_pct, schema naming
   tests/                    generic tests (no packages) + singular tests
 data/sample/                committed offline sample + manifest.json
   edgar/…_SYNTHETIC.xlsx    invented values, real structure
@@ -222,6 +236,7 @@ data/sample/                committed offline sample + manifest.json
   ghs_ucdb/…_crosswalk_cities.gpkg   the 25 crosswalk urban centres, one layer (160 KB)
 data/raw/                   full downloads (git-ignored), named <sha256-prefix>_<file>
 tests/                      pytest against warehouse_test: unit + rolled-back integration tests
+  transform/                rules on the parsed dbt project; api reader access after dbt build
 orchestration/              Dagster (Stage 5)
 docs/adr/                   architecture / methodology decision records
 ```
@@ -381,6 +396,17 @@ per-file transactions nest inside it as savepoints, so nothing a test writes is 
 committed. (An earlier version of the fixture lacked this and committed for real. On an
 idle connection, psycopg's `conn.transaction()` *is* the outermost transaction.)
 
+`tests/transform/` covers the dbt project. Run it **after** `dbt build --target test`:
+
+- `test_reporting_access.py` connects as `test_api_reader`, the way the API will, and
+  reads every reporting table (non-empty), and is refused on `raw` and `modelled`.
+  Without a build, `reporting` is empty and the test skips (fails under `REQUIRE_TEST_DB=1`).
+- `test_reporting_manifest.py` parses the project in-process (no database) and fails if
+  a reporting model is not a table with an enforced contract and typed columns, or if a
+  `*_version_id` column is not tied to `dataset_versions` and to the *current* version.
+  Models that hold older versions by design are listed there and must *not* use the
+  current-version test.
+
 ## Modelled layer (dbt)
 
 All models live in the `modelled` schema. The `pipeline` role owns the three layer
@@ -458,6 +484,88 @@ geodesic share < 1e-4. Two singular tests run macros on fixed cases: names from 
 `repair_mojibake`, and squares with known answers for `overlap_metrics`. **Warn** severity
 is for data findings, not broken builds: boundary area vs official (Accra, Buenos Aires)
 and the 0.01 overlap (Accra). These keep warning until the crosswalk is fixed.
+
+## Reporting layer (dbt)
+
+The `reporting` schema is the API's whole world: `api_reader` can read nothing else. Each
+model was designed from the endpoint that will serve it (Stage 6).
+
+| Model | Endpoint | Grain (one row is…) | Rows |
+|---|---|---|---|
+| `cities` | `GET /cities` | a crosswalk city: match, flags, years, latest urban-centre GHG | 25 |
+| `city_emissions` | `GET /cities/{id}/emissions` | city × pollutant × **EDGAR sector** × year | 4,800 |
+| `city_emissions_trend` | `GET /cities/{id}/trend` | city × pollutant × year, sectors summed | 800 |
+| `city_boundaries` | `GET /cities/{id}/boundary` | a city: boundary + urban centre as GeoJSON, bbox, licences | 25 |
+| `city_overlap` | `GET /cities/{id}/overlap` | a city: overlap metrics, flags, thresholds used | 25 |
+| `dataset_versions` | `GET /datasets` | a dataset version (current or not), with its load-check warnings | 26 |
+
+**Every model is a table with an enforced contract** (`dbt_project.yml`). Column names and
+types are declared in `models/reporting/_reporting.yml`, and `not_null` / primary-key /
+check constraints are real Postgres constraints, so a wrong type or a null fails the build
+instead of reaching the API. Tables, not views: Postgres only enforces constraints on
+tables, dbt swaps a rebuilt table in by rename (the API sees the old or the new table,
+never a half-built one), and the geometry work runs once per build. Descriptions are
+persisted as Postgres `COMMENT`s, so the labels below are visible in the database itself.
+
+**What travels with every figure.** EDGAR measures the GHS *urban centre*, not the
+administrative city (ADR 0001), so every emissions row says so and carries the evidence:
+
+| Column | Why |
+|---|---|
+| `urban_centre_emissions` (not `value`), `territory_basis = 'ghs_urban_centre'` | the figure is the urban centre's, by name |
+| `uc_share_inside_admin`, `low_urban_overlap`, `suspected_crosswalk_error` | how far that territory is the city's |
+| `crosswalk_review_status` | whether a person still has to fix the city's match |
+| `mapping_quality`, `sector_mapping_review_status` | how good the EDGAR → GPC label is (ADR 0002) |
+| `edgar_version_id`, `ucdb_version_id`, `gb_version_id` | which files the row comes from (→ `dataset_versions`) |
+
+The crosswalk's and the sector map's review statuses are named apart because both are on
+the same row. All flags come from `city_overlap`, and a test checks that every model
+carries the same values. `city_overlap` adds `admin_area_mismatch` (boundary area off the
+official one by more than 25%: Accra, Buenos Aires) and a `flags` array naming every flag
+that is set, plus `crosswalk_needs_review`.
+
+On the real data, the six largest urban-centre emitters (Jakarta, Tokyo, Seoul, Bangkok,
+Cairo, Delhi) all have `low_urban_overlap`: Jakarta's urban centre is 14% inside DKI
+Jakarta. That is why the label is on the column name and not only in the docs.
+
+**No GPC totals.** `city_emissions` stays at the EDGAR-sector grain with GPC-aligned labels
+per row. Energy and Residential both map to GPC I and Industry is `mixed` (I+IV), so a
+per-GPC sum would add approximate mappings together and hide it.
+
+**Trend over uneven years.** EDGAR's years are 1975, 1990, 2000, 2005, 2010, 2015, 2020
+and 2022. Each trend row names `prev_year` (the previous *available* year) and gives
+`annualised_change_pct`, the compound annual rate, so a 15-year and a 2-year gap compare.
+Nothing is interpolated. Formulas: `macros/change_pct.sql`, tested on hand-computed cases.
+
+**GeoJSON.** `city_boundaries` stores geometries as `jsonb` (RFC 7946: WGS84, exterior
+rings counter-clockwise, 6 decimals ≈ 0.1 m), so the API needs no PostGIS function and no
+access outside `reporting`. Both the boundary and the urban centre are included, so a map
+can show the mismatch. All 25 boundaries total ~175 kB; no further simplification.
+Licences are carried per row: geoBoundaries' licence varies by country.
+
+**Numeric types.** Exact values are declared `pg_catalog.numeric`: Postgres `numeric`
+with no precision, which stores EDGAR's figures exactly. dbt warns on the bare word
+`numeric`, a warning written for warehouses that round an unconstrained numeric. Postgres
+does not, so the type is spelled out instead of rounding the data to silence it.
+
+**Tests.** Per model: primary key, row counts against `modelled`, accepted values, and
+every `*_version_id` must exist in `dataset_versions` and be the **current** version of
+its source (`tests/generic/is_current_version.sql`). Plus:
+
+| Test | Checks |
+|---|---|
+| `assert_trend_reconciles_with_sectors` | trend totals = sum of `city_emissions` over every sector in the sector map |
+| `assert_trend_ghg_not_below_co2` | GHG ≥ CO2 still holds after summing sectors |
+| `assert_change_pct_known_cases` | change and annualised formulas on hand-computed values (incl. zero and missing) |
+| `assert_cities_latest_ghg` | `latest_urban_centre_ghg_t_co2e` is the last year's GHG total, in t CO2e |
+| `assert_reporting_flags_consistent` | every model carries the same flags as `city_overlap` |
+| `assert_known_findings_flagged` | Accra and Buenos Aires are flagged as documented; fails on purpose when fixed, so a flag never vanishes silently |
+| `city_boundaries` expressions | valid MultiPolygons, CCW rings, area within 0.1% after rounding, bbox contains both shapes |
+| `city_overlap` expressions | each flag agrees with its threshold on the row; `flags` names exactly the flags set |
+| `assert_api_reader_can_read_reporting` | after every rebuild, the reader can read each `reporting` table and has no `USAGE` on `raw` or `modelled` |
+
+The access test was checked by revoking `SELECT` on one table: the test failed, and
+rebuilding that table restored the grant through the default privileges.
 
 ## City matching (crosswalk)
 
@@ -570,6 +678,8 @@ fetched from a commit-pinned GitHub URL, recorded in `raw.dataset_versions.sourc
   schemas, and a `stg_` prefix keeps them apart.
 - **No dbt packages.** Four small generic tests in `transform/tests/generic/` instead of
   `dbt_utils`, so CI needs no `dbt deps` (network) step.
+- **Reporting designed backwards from the API**, one table per endpoint, contract-enforced,
+  so the API is a thin read layer with no joins or PostGIS calls of its own.
 - **Methodology in seeds and vars, not SQL.** The sector mapping, crosswalk and thresholds
   can be reviewed and changed without touching model code.
 - **Python 3.12 only.** dagster-dbt 0.29.28 declares `requires_python <3.14`. uv

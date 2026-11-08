@@ -13,6 +13,30 @@ models:
       - name: dataset_version_id
         data_tests: [unique, not_null]
 
+  - name: stg_raw__dataset_versions
+    description: >
+      Grain: one row per dataset version whose origin is allowed on this target, current or
+      not. is_current marks the version stg_raw__current_versions models from. View.
+    data_tests:
+      - unique_combination:
+          arguments: {columns: [source_name, source_key, file_sha256]}
+    columns:
+      - name: dataset_version_id
+        data_tests: [unique, not_null]
+      - name: is_current
+        data_tests: [not_null]
+
+  - name: stg_raw__load_checks
+    description: "Grain: one row per load check of a dataset version this target reads. View."
+    data_tests:
+      - unique_combination:
+          arguments: {columns: [dataset_version_id, check_name]}
+    columns:
+      - name: status
+        data_tests:
+          - accepted_values:
+              arguments: {values: [pass, warn]}
+
   - name: stg_edgar__urban_centres
     description: >
       Grain: one row per EDGAR urban centre in the current EDGAR version. Names repaired
