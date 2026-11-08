@@ -11,9 +11,10 @@ Docker image parses at build; otherwise it is parsed once if missing.
 
 import os
 from collections.abc import Mapping
+from datetime import timedelta
 from typing import Any
 
-from dagster import AssetExecutionContext
+from dagster import AssetExecutionContext, AssetSpec, FreshnessPolicy
 from dagster_dbt import DagsterDbtTranslator, DbtCliResource, DbtProject, dbt_assets
 
 from ingestion.config import REPO_ROOT
@@ -32,7 +33,20 @@ if not dbt_project.manifest_path.exists():
     dbt_project.preparer.prepare(dbt_project)
 
 
+# Every reporting table must have been rebuilt by Dagster within 8 days: the weekly schedule
+# plus a day of slack. It turns FAILED when the schedule is off or every run for a week has
+# failed (a failed source skips dbt). Builds outside Dagster (scripts/dbt-build.sh) are not
+# seen. Shown in the UI as the asset's freshness; evaluated by the daemon.
+REPORTING_FRESHNESS = FreshnessPolicy.time_window(fail_window=timedelta(days=8))
+
+
 class Translator(DagsterDbtTranslator):
+    def get_asset_spec(self, manifest, unique_id, project) -> AssetSpec:
+        spec = super().get_asset_spec(manifest, unique_id, project)
+        if spec.group_name == "reporting":
+            spec = spec.replace_attributes(freshness_policy=REPORTING_FRESHNESS)
+        return spec
+
     def get_group_name(self, dbt_resource_props: Mapping[str, Any]) -> str | None:
         # Folder under models/ (staging, modelled, reporting), or seeds / snapshots.
         resource_type = dbt_resource_props["resource_type"]

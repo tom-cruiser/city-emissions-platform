@@ -81,6 +81,10 @@ def _results_table(results: list[LoadResult]) -> str:
 
 def load_source(context: AssetExecutionContext, warehouse: Warehouse, mode: str,
                 source_name: str) -> MaterializeResult:
+    # Tests and CI run against warehouse_test and must never touch the network; the real
+    # warehouse never takes the sample (require_test_database refuses it in ingestion).
+    if mode == "download" and warehouse.target == "test":
+        raise Failure(description="download mode is refused on the test target: use mode 'sample'")
     run = run_sample if mode == "sample" else run_download
     try:
         with warehouse.connect() as conn:
