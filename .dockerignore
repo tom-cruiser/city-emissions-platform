@@ -1,5 +1,6 @@
-# The API image needs only pyproject.toml, uv.lock and api/. Keep everything else, and
-# above all secrets, out of the build context.
+# Build context of api/Dockerfile: it needs only pyproject.toml, uv.lock and api/. Keep
+# everything else, and above all secrets, out. (orchestration/Dockerfile uses its own
+# allowlist, orchestration/Dockerfile.dockerignore.)
 .env
 .env.*
 .git

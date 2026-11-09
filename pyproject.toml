@@ -27,18 +27,21 @@ pipeline = [
     # Transformation
     "dbt-core==1.12.6",
     "dbt-postgres==1.11.0",
-    # Orchestration
-    "dagster==1.13.28",
-    "dagster-dbt==0.29.28",
-    "dagster-postgres==0.29.28",
-    "dagster-webserver==1.13.28",
     # Ingestion
     "httpx==0.28.1",
     "openpyxl==3.1.5",
 ]
+# Installed together with `pipeline` (the Dagster image runs ingestion and dbt).
+orchestration = [
+    "dagster==1.13.28",
+    "dagster-dbt==0.29.28",
+    "dagster-postgres==0.29.28",
+    "dagster-webserver==1.13.28",
+]
 dev = [
     { include-group = "api" },
     { include-group = "pipeline" },
+    { include-group = "orchestration" },
     "pytest==9.2.0",
     "ruff==0.17.3",
     # httpx (pipeline) also provides FastAPI's TestClient.

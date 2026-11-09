@@ -1,0 +1,25 @@
+# Dagster instance config. DAGSTER_HOME points at this folder (scripts/dagster-dev.sh locally,
+# orchestration/Dockerfile in Compose).
+#
+# Runs, schedules and event logs go to the separate `dagster` database (db/init/03-dagster-db.sh),
+# never to the warehouse. Connection values come from the environment: PGHOST and
+# POSTGRES_PORT as for every other client, DAGSTER_PG_* for the database and its role.
+storage:
+  postgres:
+    postgres_db:
+      # psycopg2, the driver dagster-postgres is written for (it depends on it). SQLAlchemy
+      # 2.1 maps plain `postgresql://` to psycopg 3, whose server-side parameters break
+      # Dagster's `NOTIFY run_events, %(id)s`.
+      scheme: postgresql+psycopg2
+      hostname: {env: PGHOST}
+      port: {env: POSTGRES_PORT}
+      db_name: {env: DAGSTER_PG_DB}
+      username: {env: DAGSTER_PG_USER}
+      password: {env: DAGSTER_PG_PASSWORD}
+
+# One run at a time: two loads of the same source must not race, and dbt builds replace tables.
+run_queue:
+  max_concurrent_runs: 1
+
+telemetry:
+  enabled: false

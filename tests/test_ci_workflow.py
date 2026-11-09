@@ -28,7 +28,7 @@ def test_git_commit_comes_from_github_sha():
 def test_steps_run_in_order():
     order = ["uv sync --locked", "ruff check", "docker compose up -d --wait db",
              "ingestion load --mode sample --target test", "--target warehouse",
-             "scripts/dbt-build.sh test", "pytest", "git diff --exit-code"]
+             "dagster definitions validate -m orchestration.definitions", "scripts/dbt-build.sh test", "pytest", "git diff --exit-code"]
     positions = [RUNS.index(cmd) for cmd in order]
     assert positions == sorted(positions)
 
@@ -36,6 +36,13 @@ def test_steps_run_in_order():
 def test_api_image_is_built_but_not_pushed():
     build = next(s for s in WORKFLOW["jobs"]["api-image"]["steps"] if "build-push-action" in s.get("uses", ""))
     assert build["with"]["push"] is False and build["with"]["file"] == "api/Dockerfile"
+
+
+def test_orchestration_image_is_built_but_not_pushed():
+    build = next(s for s in WORKFLOW["jobs"]["orchestration-image"]["steps"]
+                 if "build-push-action" in s.get("uses", ""))
+    assert build["with"]["push"] is False and build["with"]["file"] == "orchestration/Dockerfile"
+    assert build["with"]["build-args"] == "GIT_COMMIT=${{ github.sha }}"
 
 
 def test_every_action_is_pinned_to_a_commit_sha():

@@ -7,7 +7,7 @@ It ingests open emissions data and city boundaries, models them in layered
 PostgreSQL/PostGIS storage with dbt, orchestrates with Dagster, and serves curated
 data through a read-only FastAPI service.
 
-> **Status: work in progress.** Stages 1–4, 6 and 7 are built; Stage 5 (Dagster orchestration) is next.
+> **Status: work in progress.** Stages 1–7 are built; Stage 8 (full docs, diagrams, ADRs) is next.
 > See [Build status](#build-status). This README describes only what exists today and
 > marks everything planned as such.
 
@@ -19,7 +19,7 @@ data through a read-only FastAPI service.
 | 2 | Source verification, Python ingestion into `raw`, dataset versioning, load checks | ✅ Done |
 | 3 | dbt: modelled layer, seeds, tests | ✅ Done |
 | 4 | Reporting layer and dbt snapshots | ✅ Done |
-| 5 | Dagster orchestration | ⏳ Planned |
+| 5 | Dagster orchestration | ✅ Done |
 | 6 | FastAPI service and tests | ✅ Done |
 | 7 | GitHub Actions CI | ✅ Done |
 | 8 | Full docs, diagrams, ADRs | ⏳ Planned |
@@ -63,7 +63,8 @@ data through a read-only FastAPI service.
    warehouse until a second EDGAR version exists.
    See [Revisions between EDGAR versions](#revisions-between-edgar-versions).
 4. ✅ **One build command**, `scripts/dbt-build.sh`, which sets `GIT_COMMIT` from git for
-   the snapshots. Local runs, CI and Dagster all call it.
+   the snapshots. Local runs and CI call it; Dagster runs dbt through dagster-dbt with
+   the same `GIT_COMMIT` rule (`scripts/git-commit.sh`).
 
 **Stage 6 items** (built before Stage 5, since reporting was designed from the endpoints)
 
@@ -194,8 +195,9 @@ Then open the API docs at **http://127.0.0.1:8000/docs** (Swagger UI) or
 `reporting` is built. Before the first `scripts/dbt-build.sh`, it answers 503, while
 `/health` (the container's healthcheck) is already up.
 
-`scripts/dbt-build.sh` is the only supported way to run `dbt build`; CI (Stage 7) and
-Dagster (Stage 5) call the same script. It sets `GIT_COMMIT` to the HEAD commit, with
+`scripts/dbt-build.sh` is the only supported way to run `dbt build` by hand; CI (Stage 7)
+calls it too. Dagster (Stage 5) runs `dbt build` through dagster-dbt, so each node becomes
+an asset. Both get `GIT_COMMIT` from `scripts/git-commit.sh`: the HEAD commit, with
 `-dirty` when tracked files have uncommitted changes, unless `GIT_COMMIT` is already set
 (CI, Docker images without `.git`). It passes `.env` to dbt when present, and profiles.yml
 holds no secrets. Other dbt commands (`parse`, `test`, `docs`) can still be run directly with
@@ -280,7 +282,9 @@ data/sample/                committed offline sample + manifest.json
   ghs_ucdb/…_crosswalk_cities.gpkg   the 25 crosswalk urban centres, one layer (160 KB)
 data/raw/                   full downloads (git-ignored), named <sha256-prefix>_<file>
 backups/                    snapshot backups from pg_dump (git-ignored)
-scripts/dbt-build.sh        the one dbt build command (sets GIT_COMMIT); used locally, in CI, by Dagster
+scripts/dbt-build.sh        the one dbt build command (sets GIT_COMMIT); used locally and in CI
+scripts/git-commit.sh       the GIT_COMMIT rule, shared by dbt-build.sh and Dagster
+scripts/dagster-dev.sh      Dagster locally (UI on 127.0.0.1:3030)
 scripts/ci_failure_summary.py   CI: failed pytest tests and dbt nodes -> the run's summary page
 .github/                    workflows/ci.yml (CI), dependabot.yml (weekly action updates)
 tests/                      pytest against warehouse_test: unit + rolled-back integration tests
@@ -290,7 +294,12 @@ api/                        FastAPI over reporting (Stage 6); Dockerfile builds 
   db.py                     read-only engine, privilege check  queries.py    every SQL statement
   models.py                 response models + enums            docs.py       OpenAPI text (urban-centre caveat)
   routers/                  cities.py, datasets.py             params.py     pagination, year range, city id
-orchestration/              Dagster (Stage 5)
+orchestration/              Dagster (Stage 5); Dockerfile builds the dagster-webserver/-daemon image
+  definitions.py            the code location: assets, checks, job, schedule, resources
+  ingestion.py              the 3 sources as assets (wrap ingestion.pipeline)
+  dbt.py                    dbt nodes as assets, dbt tests as checks, reporting freshness
+  checks.py                 load_check_warnings      resources.py   PIPELINE_TARGET, GIT_COMMIT
+  dagster.yaml              instance config: storage in the `dagster` database
 docs/adr/                   architecture / methodology decision records
 docs/openapi.json           the API contract (snapshot, checked by tests/api/test_openapi.py)
 ```
@@ -511,12 +520,14 @@ load and `scripts/dbt-build.sh test` (skips otherwise; fails under `REQUIRE_TEST
 ### Continuous integration
 
 `.github/workflows/ci.yml` runs on every push and pull request to `main` (and by hand).
-Changes go to `main` through pull requests; the **`test`** job is the required check.
+Changes go to `main` through pull requests. The **`test`** and **`api-image`** jobs are
+required checks; `orchestration-image` can be made one too.
 
 | Job | Steps |
 |---|---|
-| `test` | `uv sync --locked` (Python 3.12, uv cache keyed on `uv.lock`) → `ruff` → `docker compose up -d --wait db` → sample load into `warehouse_test` → `dbt compile --target warehouse` → `scripts/dbt-build.sh test` → `pytest` → `git diff --exit-code` |
+| `test` | `uv sync --locked` (Python 3.12, uv cache keyed on `uv.lock`) → `ruff` → `docker compose up -d --wait db` → sample load into `warehouse_test` → `dbt compile --target warehouse` → `dagster definitions validate` → `scripts/dbt-build.sh test` → `pytest` (includes Dagster's job runs on the sample) → `git diff --exit-code` |
 | `api-image` | builds `api/Dockerfile` with the BuildKit cache; never pushed |
+| `orchestration-image` | builds `orchestration/Dockerfile` (`GIT_COMMIT` = `github.sha`); never pushed |
 
 - **Same database as local.** CI copies `.env.example` to `.env` and starts the database
   with Docker Compose: same PostGIS image, same `db/init` scripts, same healthcheck. (A
@@ -533,7 +544,7 @@ Changes go to `main` through pull requests; the **`test`** job is the required c
 - **Pinned actions.** Every action is pinned to a commit SHA. Dependabot proposes updates
   weekly (`.github/dependabot.yml`, GitHub Actions only). `tests/test_ci_workflow.py`
   checks the triggers, `REQUIRE_TEST_DB`, `GIT_COMMIT`, the step order, the pins and that
-  the image is never pushed.
+  no image is ever pushed.
 
 **Duration.** Expect ~2–3 minutes with a warm uv cache. A dry run of the same steps on a
 fresh database locally took 58 s: database up 7 s, load 1 s, warehouse compile 12 s, dbt
@@ -804,7 +815,130 @@ docker compose exec -T db pg_restore -U climate -d warehouse --clean --if-exists
 Round trip checked on `warehouse_test`: dump, drop both tables, restore. The contents
 were identical by checksum, the owner was still the pipeline role, and the next `dbt snapshot`
 added no rows. `backups/` is git-ignored; copy the files somewhere off the machine too.
-Planned for Stage 5: Dagster runs the backup automatically before each build.
+The backup is still manual: Dagster (Stage 5) does not run it yet (see Next steps).
+
+## Orchestration (Dagster)
+
+Dagster runs the whole pipeline as one asset graph, from the source files to the reporting
+tables:
+
+```
+source/edgar_ucdb ──► raw/edgar_ucdb_emissions ──┬──► raw/ghs_ucdb_urban_centres ◄── source/ghs_ucdb
+source/geoboundaries ──► raw/geoboundaries_features
+                         (all three) ──► staging ──► modelled (+ seeds, snapshots) ──► reporting/* (7 tables)
+```
+
+- **Sources:** three assets, one per raw table. Each is a thin wrapper around the same
+  `ingestion.pipeline` function the CLI calls (`run_download`, or `run_sample` with config
+  `mode: sample`). It records per-file results as metadata. The asset keys equal the dbt
+  source names, so dagster-dbt links them to staging with no mapping code.
+  - GHS-UCDB depends on EDGAR: its ID check compares with the EDGAR version already in raw.
+  - The source files are external assets with their URL and licence.
+- **dbt:** every seed, model and snapshot is an asset (`reporting/cities`,
+  `modelled/snap_city_crosswalk`, …). The run is a single `dbt build`, and dbt tests show as
+  asset checks.
+  - Singular tests that read several models are logged as observations, not checks:
+    dagster-dbt can't attach them to one asset.
+  - `GIT_COMMIT` comes from `scripts/git-commit.sh`, as for `scripts/dbt-build.sh`. The
+    image has no `.git`, so build it with `GIT_COMMIT=$(scripts/git-commit.sh)`.
+- **`PIPELINE_TARGET`** (`warehouse` | `test`) picks the database for ingestion and dbt
+  together, so they can't drift apart.
+  - Download mode is refused on `test`, so tests and CI never touch the network.
+  - The sample is refused anywhere but a `*_test` database, as everywhere else.
+
+### Run it
+
+```bash
+# Existing volume (created before Stage 5)? Create Dagster's storage database once:
+docker compose up -d db && docker compose exec db bash /docker-entrypoint-initdb.d/03-dagster-db.sh
+
+GIT_COMMIT=$(scripts/git-commit.sh) docker compose build dagster-webserver dagster-daemon
+docker compose up -d --wait dagster-webserver dagster-daemon
+```
+
+Open **http://127.0.0.1:3030**: Lineage shows the graph, and *Materialize all* runs it.
+Set `DAGSTER_PORT` in `.env` to change the port; 3000 is often taken by web dev servers.
+The UI can start runs and has no login, so it is bound to 127.0.0.1 only: never publish it.
+
+- **Without Docker:** `scripts/dagster-dev.sh` runs `dagster dev` on the host against the
+  Compose database (`PIPELINE_TARGET=test scripts/dagster-dev.sh` for warehouse_test).
+- **The containers:**
+  - They get only the pipeline role and Dagster's own storage role, never the API reader
+    or the superuser.
+  - Downloads go to the `raw-downloads` volume, not the host's `data/raw/`.
+
+### Storage
+
+Dagster keeps its runs, schedules and event logs in its own **`dagster` database** on the
+same Postgres server (`orchestration/dagster.yaml`), never in the warehouse.
+`db/init/03-dagster-db.sh` creates it, and it is safe to re-run:
+- The `dagster` role owns it and can't connect to `warehouse` or `warehouse_test`.
+- The warehouse roles can't connect to it.
+
+`tests/orchestration/test_storage_db.py` checks both directions.
+
+### Schedule
+
+`weekly_refresh_schedule` runs every asset on Mondays at 03:00 UTC. **It is off by
+default**, so cloning the repo and starting Dagster never downloads anything unasked. To
+turn it on, use the UI (*Automation* → `weekly_refresh_schedule` → on), or run:
+
+```bash
+docker compose exec dagster-daemon dagster schedule start weekly_refresh_schedule -m orchestration.definitions
+```
+
+A production deployment would turn it on.
+- **Why weekly:** to notice failures early (a moved URL, a broken file, a server change).
+  The sources don't change weekly: EDGAR is released about once a year.
+- **Cost:** most weeks every file is skipped by SHA-256 and dbt rebuilds identical tables.
+  Each run still re-downloads about 300 MB, since downloads aren't cached.
+
+### Checks
+
+- **`load_check_warnings`** on each raw asset: WARN (never blocking) if the current
+  version(s) of that source have a `warn` row in `raw.load_checks`. On the real warehouse,
+  GHS-UCDB warns (`geometry_valid`, `id_match_edgar`; see [Load checks](#load-checks)).
+- **Freshness** of the 7 reporting tables: each must have been rebuilt by Dagster within
+  **8 days**. It is a `FreshnessPolicy` (Dagster 1.13's replacement for freshness checks),
+  evaluated by the daemon.
+  - **The window is tied to the weekly schedule:** 7 days plus a day of slack. If the
+    schedule changes, change `REPORTING_FRESHNESS` in `orchestration/dbt.py` with it.
+  - It turns red when the schedule is off or every run for a week has failed. With the
+    schedule off by default, expect it red until you turn it on.
+  - Builds by `scripts/dbt-build.sh` are invisible to it.
+- **dbt tests** as asset checks, including the 2 known warnings (Accra, Buenos Aires).
+
+### When a source fails
+
+| Failure | Shown as | What happens downstream |
+|---|---|---|
+| One of the 24 geoBoundaries files fails (e.g. HTTP 404) | `raw/geoboundaries_features` red. Its metadata lists every file; the error names the failing one | The other 23 are **committed** (one transaction per file). **dbt does not run** in that run |
+| EDGAR or GHS-UCDB download fails | Retried twice, a minute apart, then red | EDGAR failing skips GHS-UCDB (it depends on EDGAR). geoBoundaries still loads. dbt does not run |
+| GHS-UCDB load check fails (`LoadCheckError`) | Red, with the check's message | dbt does not run |
+| A dbt test errors | That check red | dbt skips the nodes downstream of it; other branches build |
+| A load-check warning | Yellow check on the raw asset | Nothing is blocked |
+
+Users are never affected: raw is append-only and `reporting` is rebuilt only by a run that
+gets to dbt, so the API keeps serving the last good build.
+- **Recovery:** fix the cause, then re-materialize the failed asset and everything
+  downstream in the UI, or wait for the next scheduled run. Files already loaded are
+  skipped.
+- **Alerting:** none yet (see Next steps).
+- **Concurrency:** one run at a time (`max_concurrent_runs: 1`), so two loads never race.
+
+### Tests
+
+`tests/orchestration/`:
+- **Definitions:** they load, and every `raw/*` key is an ingestion asset (a renamed
+  table would otherwise silently cut lineage).
+- **Lineage:** every reporting table traces back to a source file.
+- **Configuration:** the schedule is off, the freshness policy is set on reporting only,
+  and the check SQL reads current versions only.
+- **Job runs:** the weekly job runs end to end on the offline sample, in process. One
+  failed geoBoundaries file fails its asset while the other sources load, and dbt never
+  starts.
+
+CI also runs `dagster definitions validate` and builds the Dagster image (no push).
 
 ## API (FastAPI)
 
@@ -998,8 +1132,9 @@ fetched from a commit-pinned GitHub URL, recorded in `raw.dataset_versions.sourc
   can be reviewed and changed without touching model code.
 - **Dependencies split by where they run** (`pyproject.toml`): a small shared base
   (pydantic, psycopg), `api` (FastAPI, uvicorn, SQLAlchemy Core), `pipeline` (dbt,
-  Dagster, ingestion libraries) and `dev` (all of them plus pytest and ruff, the default
-  for `uv sync`). The API image installs only `api`: 25 packages, no dbt or Dagster.
+  ingestion libraries), `orchestration` (Dagster) and `dev` (all of them plus pytest and
+  ruff, the default for `uv sync`). The API image installs only `api`: 25 packages, no dbt
+  or Dagster. The Dagster image installs `pipeline` and `orchestration`, not `api`.
 - **Python 3.12 only.** dagster-dbt 0.29.28 declares `requires_python <3.14`. uv
   ignores that cap and would install on 3.14, but pip correctly refuses, so 3.14 is
   unsupported here. 3.11–3.13 all install and import cleanly.
@@ -1043,7 +1178,9 @@ fetched from a commit-pinned GitHub URL, recorded in `raw.dataset_versions.sourc
 
 ## Next steps
 
-Stage 5: Dagster runs ingestion, the snapshot backup, then `scripts/dbt-build.sh`, as one
-job, and checks the API's `/ready` afterwards. The reporting layer stays as built in Stage 4:
+Stage 8: full docs, diagrams and ADRs. Orchestration follow-ups, deliberately left out of
+Stage 5 to keep it simple: run the snapshot backup before each Dagster build; alert
+(email/Slack) on failed runs and failed freshness; check the API's `/ready` after a build;
+conditional downloads (ETag) so the weekly run does not re-fetch 300 MB. The reporting layer stays as built in Stage 4:
 `needs_review` cities (Accra, Buenos Aires) are included with their flags, never left out,
 and mixed GPC sectors are shown under their EDGAR name (ADR 0002).

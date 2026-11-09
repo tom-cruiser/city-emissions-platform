@@ -1,0 +1,19 @@
+# Build context for orchestration/Dockerfile (BuildKit reads <Dockerfile>.dockerignore
+# instead of the repo's .dockerignore). Everything is excluded unless listed here; .env,
+# data/, .git and backups/ never enter the image.
+*
+!pyproject.toml
+!uv.lock
+!ingestion/
+!transform/
+!orchestration/
+!scripts/git-commit.sh
+**/__pycache__
+transform/target*/
+transform/logs/
+orchestration/Dockerfile*
+orchestration/storage/
+orchestration/logs/
+orchestration/history/
+orchestration/schedules/
+orchestration/.*

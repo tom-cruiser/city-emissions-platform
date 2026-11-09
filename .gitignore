@@ -13,12 +13,21 @@ transform/target/
 transform/dbt_packages/
 transform/logs/
 transform/target-warehouse/
+transform/target-dagster-*/
 
 # CI reports (pytest --junitxml)
 reports/
 
 # Dagster local state
 orchestration/.dagster_home/
+# Dagster's local artifacts under DAGSTER_HOME=orchestration/ (runs etc. are in Postgres)
+orchestration/storage/
+orchestration/logs/
+orchestration/history/
+orchestration/schedules/
+orchestration/.logs_queue/
+orchestration/.nux/
+orchestration/.telemetry/
 .dagster_home/
 
 # Snapshot backups (pg_dump): they hold the only copy of the snapshot history, so keep

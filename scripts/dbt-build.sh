@@ -1,16 +1,14 @@
 #!/usr/bin/env bash
-# The one way to run `dbt build`: by hand, in CI (Stage 7) and from Dagster (Stage 5).
+# The one way to run `dbt build` by hand and in CI. Dagster runs dbt through dagster-dbt,
+# with the same GIT_COMMIT rule (scripts/git-commit.sh).
 #
 #   scripts/dbt-build.sh                      # warehouse (downloaded data)
 #   scripts/dbt-build.sh test                 # warehouse_test (offline sample)
 #   scripts/dbt-build.sh test --select cities # anything after the target goes to dbt
 #
 # Sets GIT_COMMIT, which the snapshots record on every new row (transform/snapshots/),
-# so a snapshot row says which commit's seeds produced it:
-#   - an already-set GIT_COMMIT wins (CI and Docker images without .git pass it in);
-#   - otherwise the HEAD commit, with "-dirty" when tracked files have uncommitted changes
-#     (the seeds on disk are then not exactly that commit's);
-#   - "unknown" if git is unavailable.
+# so a snapshot row says which commit's seeds produced it. The rule lives in
+# scripts/git-commit.sh, which Dagster uses too.
 # Reads .env when present (local runs); CI provides the same variables in its environment.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -22,14 +20,7 @@ case "$target" in
   *) echo "usage: $0 [warehouse|test] [dbt build options...]" >&2; exit 2 ;;
 esac
 
-if [[ -z "${GIT_COMMIT:-}" ]]; then
-  if commit="$(git rev-parse HEAD 2>/dev/null)"; then
-    [[ -n "$(git status --porcelain --untracked-files=no 2>/dev/null)" ]] && commit="${commit}-dirty"
-    GIT_COMMIT="$commit"
-  else
-    GIT_COMMIT="unknown"
-  fi
-fi
+GIT_COMMIT="$(scripts/git-commit.sh)"
 export GIT_COMMIT
 echo "dbt build --target ${target}  (GIT_COMMIT=${GIT_COMMIT})" >&2
 
