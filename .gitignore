@@ -12,6 +12,10 @@ __pycache__/
 transform/target/
 transform/dbt_packages/
 transform/logs/
+transform/target-warehouse/
+
+# CI reports (pytest --junitxml)
+reports/
 
 # Dagster local state
 orchestration/.dagster_home/

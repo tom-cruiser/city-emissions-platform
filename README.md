@@ -1,11 +1,13 @@
 # city-emissions-platform
 
+[![CI](https://github.com/tom-cruiser/city-emissions-platform/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/tom-cruiser/city-emissions-platform/actions/workflows/ci.yml)
+
 A small, production-shaped data platform for **city-level greenhouse-gas emissions**.
 It ingests open emissions data and city boundaries, models them in layered
 PostgreSQL/PostGIS storage with dbt, orchestrates with Dagster, and serves curated
 data through a read-only FastAPI service.
 
-> **Status: work in progress.** Stages 1–4 and 6 are built; Stage 5 (Dagster orchestration) is next.
+> **Status: work in progress.** Stages 1–4, 6 and 7 are built; Stage 5 (Dagster orchestration) is next.
 > See [Build status](#build-status). This README describes only what exists today and
 > marks everything planned as such.
 
@@ -19,7 +21,7 @@ data through a read-only FastAPI service.
 | 4 | Reporting layer and dbt snapshots | ✅ Done |
 | 5 | Dagster orchestration | ⏳ Planned |
 | 6 | FastAPI service and tests | ✅ Done |
-| 7 | GitHub Actions CI | ⏳ Planned |
+| 7 | GitHub Actions CI | ✅ Done |
 | 8 | Full docs, diagrams, ADRs | ⏳ Planned |
 
 **Stage 2 items**
@@ -279,6 +281,8 @@ data/sample/                committed offline sample + manifest.json
 data/raw/                   full downloads (git-ignored), named <sha256-prefix>_<file>
 backups/                    snapshot backups from pg_dump (git-ignored)
 scripts/dbt-build.sh        the one dbt build command (sets GIT_COMMIT); used locally, in CI, by Dagster
+scripts/ci_failure_summary.py   CI: failed pytest tests and dbt nodes -> the run's summary page
+.github/                    workflows/ci.yml (CI), dependabot.yml (weekly action updates)
 tests/                      pytest against warehouse_test: unit + rolled-back integration tests
   transform/                rules on the parsed dbt project; api reader access after dbt build
 api/                        FastAPI over reporting (Stage 6); Dockerfile builds the `api` service
@@ -503,6 +507,44 @@ load and `scripts/dbt-build.sh test` (skips otherwise; fails under `REQUIRE_TEST
   emissions field, and the document equals the committed `docs/openapi.json`. After an
   intended API change: `UPDATE_OPENAPI_SNAPSHOT=1 uv run pytest tests/api/test_openapi.py`
   and commit the snapshot with the change.
+
+### Continuous integration
+
+`.github/workflows/ci.yml` runs on every push and pull request to `main` (and by hand).
+Changes go to `main` through pull requests; the **`test`** job is the required check.
+
+| Job | Steps |
+|---|---|
+| `test` | `uv sync --locked` (Python 3.12, uv cache keyed on `uv.lock`) → `ruff` → `docker compose up -d --wait db` → sample load into `warehouse_test` → `dbt compile --target warehouse` → `scripts/dbt-build.sh test` → `pytest` → `git diff --exit-code` |
+| `api-image` | builds `api/Dockerfile` with the BuildKit cache; never pushed |
+
+- **Same database as local.** CI copies `.env.example` to `.env` and starts the database
+  with Docker Compose: same PostGIS image, same `db/init` scripts, same healthcheck. (A
+  GitHub `services:` container starts before checkout and could not run `db/init`.)
+- **Nothing skips.** `REQUIRE_TEST_DB=1` makes an unreachable database or an unbuilt
+  `reporting` a failure.
+- **`GIT_COMMIT` is `github.sha`**, passed through `scripts/dbt-build.sh` to the snapshots.
+- **The warehouse code paths compile.** The test target never runs `raw_origins`'s
+  `download` branch or the `origin = 'download'` test. `dbt compile --target warehouse`
+  against the empty `warehouse` renders them.
+- **The API contract is enforced.** The OpenAPI snapshot test runs in `pytest`, refuses
+  `UPDATE_OPENAPI_SNAPSHOT` when `CI` is set, and the final `git diff --exit-code` fails if
+  the run changed any tracked file.
+- **Pinned actions.** Every action is pinned to a commit SHA. Dependabot proposes updates
+  weekly (`.github/dependabot.yml`, GitHub Actions only). `tests/test_ci_workflow.py`
+  checks the triggers, `REQUIRE_TEST_DB`, `GIT_COMMIT`, the step order, the pins and that
+  the image is never pushed.
+
+**Duration.** Expect ~2–3 minutes with a warm uv cache. A dry run of the same steps on a
+fresh database locally took 58 s: database up 7 s, load 1 s, warehouse compile 12 s, dbt
+build 17 s, pytest 21 s. CI adds checkout, `uv sync` and the PostGIS image pull.
+
+**Finding a failure fast.** Lint runs first and fails in seconds, with ruff findings as
+annotations on the PR's changed lines. On any failure, the run's **summary page** lists the
+failed pytest tests and dbt nodes with their messages (`scripts/ci_failure_summary.py`).
+The `failure-details` artifact (7 days) holds `pytest.xml`, `run_results.json`, `dbt.log`
+and the database log. From a terminal: `gh pr checks --watch`, then
+`gh run view --log-failed`.
 
 ## Modelled layer (dbt)
 

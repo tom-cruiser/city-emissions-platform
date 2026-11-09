@@ -1,0 +1,102 @@
+# CI: lint, then the offline pipeline end to end (sample load -> dbt build -> pytest) on
+# the same Docker Compose database as local runs, and a build of the API image.
+# Third-party actions are pinned to commit SHAs (Dependabot proposes updates weekly).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # A new push to a pull request cancels its older run; runs on main always finish.
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      REQUIRE_TEST_DB: "1"            # an unreachable database or unbuilt reporting fails, never skips
+      GIT_COMMIT: ${{ github.sha }}   # scripts/dbt-build.sh keeps a preset GIT_COMMIT (recorded by snapshots)
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.13.7"
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install dependencies (fails if uv.lock is out of date)
+        run: uv sync --locked
+
+      - name: Lint (ruff)
+        run: uv run ruff check . --output-format=github
+
+      - name: Start the database (same Compose setup and init scripts as local)
+        run: |
+          cp .env.example .env    # placeholder passwords: fine for a throwaway runner
+          docker compose up -d --wait db
+
+      - name: Load the offline sample into warehouse_test
+        run: uv run python -m ingestion load --mode sample --target test
+
+      - name: dbt compile against the empty warehouse (warehouse-only code paths)
+        run: >-
+          uv run --env-file .env dbt compile --project-dir transform --profiles-dir transform
+          --target warehouse --target-path target-warehouse
+
+      - name: dbt build (warehouse_test)
+        run: scripts/dbt-build.sh test
+
+      - name: pytest (includes the OpenAPI snapshot)
+        run: |
+          mkdir -p reports
+          uv run pytest -rfE --durations=10 --junitxml=reports/pytest.xml
+
+      - name: The run changed no tracked file
+        run: git diff --exit-code
+
+      - name: Failure summary
+        if: failure()
+        run: |
+          uv run python scripts/ci_failure_summary.py >> "$GITHUB_STEP_SUMMARY"
+          docker compose logs db > reports/db.log 2>&1 || true
+
+      - name: Upload failure details
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: failure-details
+          retention-days: 7
+          if-no-files-found: ignore
+          path: |
+            reports/
+            transform/target/run_results.json
+            transform/logs/dbt.log
+
+  api-image:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build the API image (no push)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: api/Dockerfile
+          push: false
+          tags: city-emissions-api:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
