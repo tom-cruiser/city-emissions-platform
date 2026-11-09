@@ -13,7 +13,7 @@ What each stage delivered, as recorded while it was built. Back to the [README](
 | 5 | Dagster orchestration | ✅ Done |
 | 6 | FastAPI service and tests | ✅ Done |
 | 7 | GitHub Actions CI | ✅ Done |
-| 8 | Full docs, diagrams, ADRs | ⏳ Planned |
+| 8 | Full docs, diagrams, ADRs | ✅ Done |
 
 **Stage 2 items**
 
