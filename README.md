@@ -215,6 +215,14 @@ Orchestration follow-ups:
 - check the API's `/ready` after a build;
 - use conditional downloads (ETag), so the weekly run doesn't re-fetch ~375 MB.
 
+## How this was built
+
+This project was built with an AI coding assistant (Claude Code), stage by stage, through pull
+requests. I set the direction and reviewed each stage's plan before any code was written.
+I made the design decisions: the overlap threshold and flags, the GPC-aligned scope, the
+synthetic EDGAR fixture, the read-only API and the PR workflow. I also verified the results
+against the data before merging each stage.
+
 ## Documentation
 
 - [Running the platform](docs/running.md): full setup, real-data loads, backups
