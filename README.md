@@ -229,3 +229,5 @@ Orchestration follow-ups:
 - [Architecture decision records](docs/adr/) (0001–0007)
 - [Design notes](docs/design-notes.md): every design decision and limitation in full
 - [Build history](docs/build-history.md): what each stage delivered
+- `scripts/check_readme_numbers.py` checks the figures quoted here against the data
+  and the code

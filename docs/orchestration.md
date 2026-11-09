@@ -76,7 +76,7 @@ A production deployment would turn it on.
 - **Why weekly:** to notice failures early (a moved URL, a broken file, a server change).
   The sources don't change weekly: EDGAR is released about once a year.
 - **Cost:** most weeks every file is skipped by SHA-256 and dbt rebuilds identical tables.
-  Each run still re-downloads about 300 MB, since downloads aren't cached.
+  Each run still re-downloads about 375 MB, since downloads aren't cached.
 
 ### Checks
 

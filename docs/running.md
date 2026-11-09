@@ -11,7 +11,7 @@ cp .env.example .env                 # then change the passwords
 docker compose up -d --wait          # PostGIS on 127.0.0.1:5434 + the API on 127.0.0.1:8000
 uv sync                              # Python 3.12 environment from uv.lock (all dependency groups)
 
-# Real data -> warehouse (~25 MB EDGAR, ~70 MB boundaries, 277 MB GHS-UCDB), then build it.
+# Real data -> warehouse (~24 MB EDGAR, ~74 MB boundaries, 277 MB GHS-UCDB), then build it.
 uv run python -m ingestion load --mode download
 scripts/dbt-build.sh                 # dbt always runs through this script (sets GIT_COMMIT, reads .env)
 

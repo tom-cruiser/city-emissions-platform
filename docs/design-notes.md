@@ -18,7 +18,7 @@ Every design decision and known limitation in full, as recorded while building. 
 - **A separate test database with its own roles**, so isolation is enforced by
   Postgres permissions rather than by careful configuration.
 - **GeoPackage read without GDAL.** The format is SQLite plus a small documented header.
-  Parsing it in ~100 lines avoids a heavy native dependency in the pipeline image, and every
+  Parsing it in 125 lines avoids a heavy native dependency in the pipeline image, and every
   load cross-checks the parsed header against PostGIS.
 - **Load checks stored next to the data** (`raw.load_checks`), so a warning such as
   "22 invalid polygons" is queryable lineage, not a log line that scrolls away.
@@ -33,7 +33,7 @@ Every design decision and known limitation in full, as recorded while building. 
 - **Dependencies split by where they run** (`pyproject.toml`): a small shared base
   (pydantic, psycopg), `api` (FastAPI, uvicorn, SQLAlchemy Core), `pipeline` (dbt,
   ingestion libraries), `orchestration` (Dagster) and `dev` (all of them plus pytest and
-  ruff, the default for `uv sync`). The API image installs only `api`: 25 packages, no dbt
+  ruff, the default for `uv sync`). The API image installs only `api`: 24 packages on Linux, no dbt
   or Dagster. The Dagster image installs `pipeline` and `orchestration`, not `api`.
 - **Python 3.12 only.** dagster-dbt 0.29.28 declares `requires_python <3.14`. uv
   ignores that cap and would install on 3.14, but pip correctly refuses, so 3.14 is

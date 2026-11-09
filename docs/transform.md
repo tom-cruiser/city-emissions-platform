@@ -73,7 +73,7 @@ On the real data: 12 of 25 cities have `low_urban_overlap`. Only Accra (0.005) h
 `suspected_crosswalk_error`. Paris (0.074) is low but correct: département 75 is the
 city, and its urban centre is 13× larger.
 
-**Tests** (79 in total). Error severity covers: grain uniqueness, row counts against
+**Tests** (94 on seeds, staging and modelled models; 187 in the whole project). Error severity covers: grain uniqueness, row counts against
 sources, complete series per urban centre and per city (this catches double counting such
 as the synthetic duplicate Lagos), exactly one EDGAR version in each fact table, GHG ≥ CO2,
 no negatives, an unknown pollutant or sector, `ton/year`, geometry validity/SRID, shapes

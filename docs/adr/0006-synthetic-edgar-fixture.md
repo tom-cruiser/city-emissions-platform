@@ -6,7 +6,7 @@
 
 ## Context
 
-Tests and CI need EDGAR data offline: the real workbook is ~25 MB and CI must not touch
+Tests and CI need EDGAR data offline: the real workbook is ~24 MB and CI must not touch
 the network. The obvious fixture is a slice of the real file. But EDGAR's IEA-EDGAR CO2
 component is licensed **CC BY-NC-ND 4.0**, and the general licence text in the file is
 truncated, so it is not clear that redistributing an extract (a derivative) is allowed.

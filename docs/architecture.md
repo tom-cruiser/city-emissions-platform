@@ -141,6 +141,7 @@ scripts/dbt-build.sh        the one dbt build command (sets GIT_COMMIT); used lo
 scripts/git-commit.sh       the GIT_COMMIT rule, shared by dbt-build.sh and Dagster
 scripts/dagster-dev.sh      Dagster locally (UI on 127.0.0.1:3030)
 scripts/ci_failure_summary.py   CI: failed pytest tests and dbt nodes -> the run's summary page
+scripts/check_readme_numbers.py  by hand: the figures quoted in the docs vs the data and the code
 .github/                    workflows/ci.yml (CI), dependabot.yml (weekly action updates)
 tests/                      pytest against warehouse_test: unit + rolled-back integration tests
   transform/                rules on the parsed dbt project; api reader access after dbt build
