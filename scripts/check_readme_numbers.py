@@ -134,6 +134,18 @@ def api_image_packages() -> int:
     return n
 
 
+def dagster_assets() -> str:
+    """Materializable assets in the Dagster code location: total / ingestion group / the rest (dbt)."""
+    out = run("uv", "run", "--env-file", ".env", "python", "-c",
+              "from orchestration.definitions import defs\n"
+              "g = defs.resolve_asset_graph()\n"
+              "n = [g.get(k) for k in g.get_all_asset_keys()]\n"
+              "m = [x for x in n if x.is_materializable]\n"
+              "i = sum(x.group_name == 'ingestion' for x in m)\n"
+              "print(f'{len(m)}/{i}/{len(m) - i}')")
+    return out.strip().splitlines()[-1]
+
+
 def sample_geoboundaries_files() -> int:
     return len(list((REPO / "data/sample/geoboundaries").glob("*.geojson")))
 
@@ -260,6 +272,13 @@ CHECKS = [
     Check("needs_review: Accra, Buenos Aires", "README, docs/data-quality.md", "code",
           "accra-gha,buenos-aires-arg",
           lambda: ",".join(sorted(r["city_id"] for r in crosswalk() if r["review_status"] == "needs_review"))),
+    Check("thresholds 0.5 / 0.01 / 25% used on the real data", "README, ADR 0001", "real", "0.5/0.01/0.25",
+          real(f"SELECT string_agg(DISTINCT concat_ws('/', min_urban_overlap::float, suspect_crosswalk_overlap::float,"
+               f" admin_area_tolerance::float), ',') FROM {OVERLAP}")),
+    Check("EDGAR years 1975–2022", "README, docs/transform.md", "real", "1975-2022",
+          real("SELECT min(year) || '-' || max(year) FROM reporting.city_emissions")),
+    Check("2 expected dbt warnings on the sample (area, 1% overlap)", "README quick start", "test", "2",
+          test(f"SELECT (bool_or(admin_area_mismatch))::int + (bool_or(suspected_crosswalk_error))::int FROM {OVERLAP}")),
     # Urban-centre releases
     Check("EDGAR 11,686 urban centres", "README, docs/data-quality.md", "real", "11686",
           real("SELECT count(*) FROM modelled.stg_edgar__urban_centres")),
@@ -322,6 +341,11 @@ CHECKS = [
     Check("7 reporting models", "README, docs/transform.md", "code", "7",
           lambda: len(list((REPO / "transform/models/reporting").glob("*.sql")))),
     Check("9 data endpoints", "README, docs/api.md", "code", "9", openapi_data_endpoints),
+    Check("28 Dagster assets it can run (3 ingestion, 25 dbt)", "README", "code", "28/3/25", dagster_assets),
+    Check("PostgreSQL 16 + PostGIS 3.5", "README", "code", "16-3.5",
+          lambda: re.search(r"image: postgis/postgis:(\S+)", (REPO / "docker-compose.yml").read_text()).group(1)),
+    Check("Python 3.12", "README", "code", "3.12",
+          lambda: re.search(r'requires-python = "[^0-9]*(3\.\d+)', (REPO / "pyproject.toml").read_text()).group(1)),
     Check("187 dbt tests", "README", "code", "187", lambda: len(dbt_tests())),
     Check("94 dbt tests on seeds, staging, modelled", "docs/transform.md", "code", "94",
           dbt_tests_outside_reporting_and_snapshots),

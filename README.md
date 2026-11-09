@@ -2,8 +2,8 @@
 
 [![CI](https://github.com/tom-cruiser/city-emissions-platform/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/tom-cruiser/city-emissions-platform/actions/workflows/ci.yml)
 
-This is a small data platform for greenhouse-gas emissions in 25 cities, most of them in
-Africa and the Global South. It downloads the EU's EDGAR estimates of emissions per urban
+This is a small data platform for greenhouse-gas emissions in 25 cities, 13 of them in
+Africa. It downloads the EU's EDGAR estimates of emissions per urban
 area, matches each urban area to the city's official administrative boundary, and serves
 the result through a read-only web API. The data model makes one point explicit: EDGAR measures a
 satellite-defined *urban centre*, not the city, and in 12 of the 25 cities less than
@@ -217,11 +217,13 @@ Orchestration follow-ups:
 
 ## How this was built
 
-This project was built with an AI coding assistant (Claude Code), stage by stage, through pull
-requests. I set the direction and reviewed each stage's plan before any code was written.
-I made the design decisions: the overlap threshold and flags, the GPC-aligned scope, the
-synthetic EDGAR fixture, the read-only API and the PR workflow. I also verified the results
-against the data before merging each stage.
+This project was built with AI assistants. Claude Code wrote the code stage by stage
+through pull requests, and I used a second AI assistant to review each stage's plan and
+results with me. I set the scope and direction, reviewed every plan before code was
+written, and made the final call on each design decision, including the overlap metric
+and flags, the GPC-aligned scope, the synthetic EDGAR fixture, the read-only API and the
+PR workflow. Every figure in this README is checked against the data by a committed
+script, [`scripts/check_readme_numbers.py`](scripts/check_readme_numbers.py).
 
 ## Documentation
 
