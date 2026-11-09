@@ -61,7 +61,10 @@ def dbt_models(context: AssetExecutionContext, dbt: DbtCliResource):
     # subprocess; this runs in the run's own worker process.
     os.environ["GIT_COMMIT"] = git_commit()
     context.log.info(f"dbt build --target {TARGET}  (GIT_COMMIT={os.environ['GIT_COMMIT']})")
-    yield from dbt.cli(["build"], context=context).stream()
+    # Under this target's own folder (writable in the image), not dagster-dbt's default
+    # transform/target/, which belongs to scripts/dbt-build.sh.
+    run_dir = dbt_project.project_dir / dbt_project.target_path / "runs" / context.run.run_id
+    yield from dbt.cli(["build"], context=context, target_path=run_dir).stream()
 
 
 dbt_resource = DbtCliResource(project_dir=dbt_project, target=TARGET)

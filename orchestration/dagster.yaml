@@ -7,6 +7,10 @@
 storage:
   postgres:
     postgres_db:
+      # psycopg2, the driver dagster-postgres is written for (it depends on it). SQLAlchemy
+      # 2.1 maps plain `postgresql://` to psycopg 3, whose server-side parameters break
+      # Dagster's `NOTIFY run_events, %(id)s`.
+      scheme: postgresql+psycopg2
       hostname: {env: PGHOST}
       port: {env: POSTGRES_PORT}
       db_name: {env: DAGSTER_PG_DB}

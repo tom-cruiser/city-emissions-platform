@@ -1,5 +1,35 @@
-# The warehouse (and warehouse_test) and the read-only API. Dagster is added in Stage 5.
+# The warehouse (and warehouse_test), the read-only API, and Dagster (webserver + daemon).
 name: city-emissions-platform
+
+# Shared by both Dagster services: same image, same credentials.
+x-dagster: &dagster
+  build:
+    context: .
+    dockerfile: orchestration/Dockerfile
+    args:
+      GIT_COMMIT: ${GIT_COMMIT:-unknown}   # build with GIT_COMMIT=$(scripts/git-commit.sh)
+  image: city-emissions-dagster:local
+  # The pipeline role (writes raw, builds modelled/reporting) and Dagster's own storage
+  # role. Never the API reader, the test roles or the superuser: tests/test_compose.py.
+  environment:
+    PGHOST: db
+    POSTGRES_PORT: "5432"   # inside the Compose network, not the host port
+    POSTGRES_DB: ${POSTGRES_DB}
+    PIPELINE_USER: ${PIPELINE_USER}
+    PIPELINE_PASSWORD: ${PIPELINE_PASSWORD}
+    PIPELINE_TARGET: warehouse
+    DAGSTER_PG_DB: ${DAGSTER_PG_DB}
+    DAGSTER_PG_USER: ${DAGSTER_PG_USER}
+    DAGSTER_PG_PASSWORD: ${DAGSTER_PG_PASSWORD}
+  depends_on:
+    db:
+      condition: service_healthy
+  volumes:
+    - raw-downloads:/app/data/raw          # downloaded source files, kept between runs
+    - dagster-storage:/app/orchestration/storage   # compute logs (runs are in Postgres)
+  tmpfs: [/tmp]
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
 
 services:
   db:
@@ -70,5 +100,24 @@ services:
       retries: 5
       start_period: 5s
 
+  dagster-webserver:
+    <<: *dagster
+    ports:
+      # Localhost only. The UI can start runs and has no login: never expose it.
+      - "127.0.0.1:${DAGSTER_PORT:-3030}:3000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:3000/server_info', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # Runs schedules, the run queue and freshness evaluation. No ports.
+  dagster-daemon:
+    <<: *dagster
+    command: ["dagster-daemon", "run", "-m", "orchestration.definitions"]
+
 volumes:
   pgdata:
+  raw-downloads:
+  dagster-storage:
